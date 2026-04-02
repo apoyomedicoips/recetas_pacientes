@@ -1,0 +1,11 @@
+﻿{
+  "metadata": {
+    "project": "recetas_pacientes",
+    "fecha_corte": "",
+    "notes": [
+      "Estructura inicial para analisis por paciente y medico.",
+      "Reemplazar este archivo con una exportacion real desde DuckDB o fuente operativa."
+    ]
+  },
+  "detail": []
+}
