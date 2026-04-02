@@ -8,113 +8,203 @@
 </head>
 <body>
   <div class="app-shell">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">IPS · Departamento de Apoyo Médico</p>
-        <h1>Panel de Recetas por Paciente y Médico</h1>
-        <p class="hero-copy">
-          Seguimiento inicial de recetas con foco en pacientes, médicos prescriptores,
-          productos y ventanillas de dispensación.
-        </p>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <p class="eyebrow">IPS · Apoyo Médico</p>
+        <h1>Recetas</h1>
+        <p class="sidebar-copy">Seguimiento histórico por paciente, médico y actividad reciente.</p>
       </div>
-      <div class="hero-meta">
-        <div class="meta-card">
-          <span class="meta-label">Modo</span>
-          <strong id="mode-badge">Cargando...</strong>
-        </div>
-        <div class="meta-card">
-          <span class="meta-label">Período</span>
-          <strong id="meta-fecha">Cargando...</strong>
-        </div>
-      </div>
-    </header>
 
-    <section class="kpi-grid" id="kpi-grid">
-      <article class="kpi card"><span class="kpi-label">Recetas</span><strong id="kpi-recetas">0</strong><p>Recetas únicas visibles.</p></article>
-      <article class="kpi card"><span class="kpi-label">Pacientes</span><strong id="kpi-pacientes">0</strong><p>Pacientes únicos con receta.</p></article>
-      <article class="kpi card"><span class="kpi-label">Médicos</span><strong id="kpi-medicos">0</strong><p>Prescriptores únicos detectados.</p></article>
-      <article class="kpi card"><span class="kpi-label">Productos</span><strong id="kpi-productos">0</strong><p>Productos distintos recetados.</p></article>
-      <article class="kpi card"><span class="kpi-label">Cant. recetada</span><strong id="kpi-recetado">0</strong><p>Suma total de cantidades recetadas.</p></article>
-      <article class="kpi card"><span class="kpi-label">Cant. dispensada</span><strong id="kpi-dispensado">0</strong><p>Suma total de cantidades dispensadas.</p></article>
-    </section>
+      <nav class="sidebar-nav">
+        <button class="nav-btn active" data-view="overview">Resumen</button>
+        <button class="nav-btn" data-view="patients">Pacientes</button>
+        <button class="nav-btn" data-view="doctors">Médicos</button>
+      </nav>
 
-    <section class="card filters-panel">
-      <div class="filters-head">
-        <h2>Exploración rápida</h2>
-        <span id="active-filter" class="mini-meta">Sin filtro activo</span>
+      <div class="sidebar-meta card">
+        <span class="meta-label">Modo</span>
+        <strong id="mode-badge">Snapshot</strong>
+        <span class="meta-label">Período</span>
+        <strong id="meta-fecha">Cargando...</strong>
+        <span class="meta-label">Generado</span>
+        <strong id="generated-at">Cargando...</strong>
       </div>
-      <div class="filters-grid">
-        <label class="control">
-          <span>Buscar paciente</span>
-          <input id="search-paciente" type="text" placeholder="Nombre o cédula">
-        </label>
-        <label class="control">
-          <span>Buscar médico</span>
-          <input id="search-medico" type="text" placeholder="Nombre o código">
-        </label>
-        <label class="control">
-          <span>Buscar producto</span>
-          <input id="search-producto" type="text" placeholder="Producto o código SAP">
-        </label>
-        <label class="control">
-          <span>Ventanilla</span>
-          <select id="filter-ventanilla">
-            <option value="">Todas</option>
-          </select>
-        </label>
-      </div>
-      <div class="filters-actions">
-        <button id="btn-clear-filters" class="btn-soft">Limpiar filtros</button>
-      </div>
-    </section>
+    </aside>
 
-    <main class="content-grid">
-      <section class="card panel">
-        <div class="panel-head">
-          <h2>Top Pacientes</h2>
-          <span id="top-pacientes-meta" class="mini-meta"></span>
+    <main class="main-shell">
+      <header class="topbar card">
+        <div>
+          <p class="eyebrow">Panel Analítico</p>
+          <h2 id="view-title">Resumen ejecutivo</h2>
         </div>
-        <div id="top-pacientes"></div>
+        <p class="topbar-copy">La portada usa un snapshot compacto. Las vistas laterales cargan históricos mensuales completos bajo demanda.</p>
+      </header>
+
+      <section id="view-overview" class="view-section active">
+        <section class="kpi-grid">
+          <article class="card kpi"><span class="kpi-label">Recetas</span><strong id="kpi-recetas">0</strong></article>
+          <article class="card kpi"><span class="kpi-label">Pacientes</span><strong id="kpi-pacientes">0</strong></article>
+          <article class="card kpi"><span class="kpi-label">Médicos</span><strong id="kpi-medicos">0</strong></article>
+          <article class="card kpi"><span class="kpi-label">Productos</span><strong id="kpi-productos">0</strong></article>
+          <article class="card kpi"><span class="kpi-label">Cant. recetada</span><strong id="kpi-recetado">0</strong></article>
+          <article class="card kpi"><span class="kpi-label">Cant. dispensada</span><strong id="kpi-dispensado">0</strong></article>
+        </section>
+
+        <section class="overview-grid">
+          <article class="card panel">
+            <div class="panel-head">
+              <h3>Top Pacientes</h3>
+              <span class="mini-meta">Acceso rápido a historias</span>
+            </div>
+            <div id="top-pacientes"></div>
+          </article>
+
+          <article class="card panel">
+            <div class="panel-head">
+              <h3>Top Médicos</h3>
+              <span class="mini-meta">Acceso rápido a prescriptores</span>
+            </div>
+            <div id="top-medicos"></div>
+          </article>
+        </section>
+
+        <section class="card panel">
+          <div class="panel-head">
+            <h3>Registros Recientes</h3>
+            <span class="mini-meta">Últimos movimientos visibles en el snapshot</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Receta</th>
+                  <th>Paciente</th>
+                  <th>Médico</th>
+                  <th>Producto</th>
+                  <th>Recetada</th>
+                  <th>Dispensada</th>
+                  <th>Ventanilla</th>
+                </tr>
+              </thead>
+              <tbody id="detail-body"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
-      <section class="card panel">
-        <div class="panel-head">
-          <h2>Top Médicos</h2>
-          <span id="top-medicos-meta" class="mini-meta"></span>
-        </div>
-        <div id="top-medicos"></div>
+      <section id="view-patients" class="view-section">
+        <section class="split-grid">
+          <article class="card panel sidebar-list">
+            <div class="panel-head">
+              <h3>Historias por paciente</h3>
+              <span id="patients-meta" class="mini-meta">Cargando...</span>
+            </div>
+            <label class="control">
+              <span>Buscar paciente</span>
+              <input id="patients-search" type="text" placeholder="Nombre o cédula">
+            </label>
+            <div id="patients-list" class="stack-list"></div>
+          </article>
+
+          <div class="content-stack">
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Ficha del paciente</h3>
+                <span class="mini-meta">Historia completa agregada por mes</span>
+              </div>
+              <div id="patient-focus"></div>
+            </article>
+
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Serie de tiempo mensual</h3>
+                <span class="mini-meta">Recetas y cantidades recetadas</span>
+              </div>
+              <div id="patient-chart" class="chart-wrap"></div>
+              <div id="patient-chart-legend" class="chart-legend"></div>
+            </article>
+
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Historia mensual</h3>
+                <span class="mini-meta">Agrupada por mes</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Mes</th>
+                      <th>Recetas</th>
+                      <th>Productos</th>
+                      <th>Médicos</th>
+                      <th>Recetada</th>
+                      <th>Dispensada</th>
+                    </tr>
+                  </thead>
+                  <tbody id="patients-history"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
       </section>
 
-      <section class="card panel wide">
-        <div class="panel-head">
-          <h2>Ficha Seleccionada</h2>
-          <span id="focus-meta" class="mini-meta">Selecciona un paciente o médico desde los rankings</span>
-        </div>
-        <div id="focus-card" class="focus-empty">Aún no hay una selección activa.</div>
-      </section>
+      <section id="view-doctors" class="view-section">
+        <section class="split-grid">
+          <article class="card panel sidebar-list">
+            <div class="panel-head">
+              <h3>Análisis por médico</h3>
+              <span id="doctors-meta" class="mini-meta">Cargando...</span>
+            </div>
+            <label class="control">
+              <span>Buscar médico</span>
+              <input id="doctors-search" type="text" placeholder="Nombre o código">
+            </label>
+            <div id="doctors-list" class="stack-list"></div>
+          </article>
 
-      <section class="card panel wide">
-        <div class="panel-head">
-          <h2>Últimos Registros</h2>
-          <span id="status-box" class="mini-meta">Cargando datos...</span>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Receta</th>
-                <th>Paciente</th>
-                <th>Médico</th>
-                <th>Producto</th>
-                <th>Recetada</th>
-                <th>Dispensada</th>
-                <th>Ventanilla</th>
-              </tr>
-            </thead>
-            <tbody id="detail-body"></tbody>
-          </table>
-        </div>
+          <div class="content-stack">
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Ficha del médico</h3>
+                <span class="mini-meta">Historia completa agregada por mes</span>
+              </div>
+              <div id="doctor-focus"></div>
+            </article>
+
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Serie de tiempo mensual</h3>
+                <span class="mini-meta">Recetas y cantidades recetadas</span>
+              </div>
+              <div id="doctor-chart" class="chart-wrap"></div>
+              <div id="doctor-chart-legend" class="chart-legend"></div>
+            </article>
+
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Actividad mensual</h3>
+                <span class="mini-meta">Pacientes y productos por mes</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Mes</th>
+                      <th>Recetas</th>
+                      <th>Pacientes</th>
+                      <th>Productos</th>
+                      <th>Recetada</th>
+                      <th>Dispensada</th>
+                    </tr>
+                  </thead>
+                  <tbody id="doctors-history"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
       </section>
     </main>
   </div>
