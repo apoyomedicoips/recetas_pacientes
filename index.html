@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
@@ -38,6 +38,36 @@
       <article class="kpi card"><span class="kpi-label">Cant. dispensada</span><strong id="kpi-dispensado">0</strong><p>Suma total de cantidades dispensadas.</p></article>
     </section>
 
+    <section class="card filters-panel">
+      <div class="filters-head">
+        <h2>Exploración rápida</h2>
+        <span id="active-filter" class="mini-meta">Sin filtro activo</span>
+      </div>
+      <div class="filters-grid">
+        <label class="control">
+          <span>Buscar paciente</span>
+          <input id="search-paciente" type="text" placeholder="Nombre o cédula">
+        </label>
+        <label class="control">
+          <span>Buscar médico</span>
+          <input id="search-medico" type="text" placeholder="Nombre o código">
+        </label>
+        <label class="control">
+          <span>Buscar producto</span>
+          <input id="search-producto" type="text" placeholder="Producto o código SAP">
+        </label>
+        <label class="control">
+          <span>Ventanilla</span>
+          <select id="filter-ventanilla">
+            <option value="">Todas</option>
+          </select>
+        </label>
+      </div>
+      <div class="filters-actions">
+        <button id="btn-clear-filters" class="btn-soft">Limpiar filtros</button>
+      </div>
+    </section>
+
     <main class="content-grid">
       <section class="card panel">
         <div class="panel-head">
@@ -53,6 +83,14 @@
           <span id="top-medicos-meta" class="mini-meta"></span>
         </div>
         <div id="top-medicos"></div>
+      </section>
+
+      <section class="card panel wide">
+        <div class="panel-head">
+          <h2>Ficha Seleccionada</h2>
+          <span id="focus-meta" class="mini-meta">Selecciona un paciente o médico desde los rankings</span>
+        </div>
+        <div id="focus-card" class="focus-empty">Aún no hay una selección activa.</div>
       </section>
 
       <section class="card panel wide">
