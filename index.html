@@ -3,144 +3,80 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Panel de Recetas por Paciente y Medico</title>
+  <title>Panel de Recetas por Paciente y Médico</title>
   <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
   <div class="app-shell">
     <header class="hero">
       <div>
-        <p class="eyebrow">IPS · Departamento de Apoyo Medico</p>
-        <h1>Panel de Recetas por Paciente y Medico</h1>
+        <p class="eyebrow">IPS · Departamento de Apoyo Médico</p>
+        <h1>Panel de Recetas por Paciente y Médico</h1>
         <p class="hero-copy">
-          Base inicial para explorar recetas desde dos ejes: paciente y medico prescriptor.
-          El tablero queda preparado para conectar una exportacion dedicada desde DuckDB.
+          Seguimiento inicial de recetas con foco en pacientes, médicos prescriptores,
+          productos y ventanillas de dispensación.
         </p>
       </div>
       <div class="hero-meta">
         <div class="meta-card">
           <span class="meta-label">Modo</span>
-          <strong id="mode-badge">Inicializando...</strong>
+          <strong id="mode-badge">Cargando...</strong>
         </div>
         <div class="meta-card">
-          <span class="meta-label">Corte</span>
-          <strong id="meta-fecha">Sin datos</strong>
+          <span class="meta-label">Período</span>
+          <strong id="meta-fecha">Cargando...</strong>
         </div>
       </div>
     </header>
 
-    <main class="layout">
-      <aside class="sidebar card">
-        <h2>Filtros previstos</h2>
-        <p class="muted">
-          Esta copia ya separa los puntos de entrada que vamos a usar en la version analitica.
-        </p>
+    <section class="kpi-grid" id="kpi-grid">
+      <article class="kpi card"><span class="kpi-label">Recetas</span><strong id="kpi-recetas">0</strong><p>Recetas únicas visibles.</p></article>
+      <article class="kpi card"><span class="kpi-label">Pacientes</span><strong id="kpi-pacientes">0</strong><p>Pacientes únicos con receta.</p></article>
+      <article class="kpi card"><span class="kpi-label">Médicos</span><strong id="kpi-medicos">0</strong><p>Prescriptores únicos detectados.</p></article>
+      <article class="kpi card"><span class="kpi-label">Productos</span><strong id="kpi-productos">0</strong><p>Productos distintos recetados.</p></article>
+      <article class="kpi card"><span class="kpi-label">Cant. recetada</span><strong id="kpi-recetado">0</strong><p>Suma total de cantidades recetadas.</p></article>
+      <article class="kpi card"><span class="kpi-label">Cant. dispensada</span><strong id="kpi-dispensado">0</strong><p>Suma total de cantidades dispensadas.</p></article>
+    </section>
 
-        <label class="field">
-          <span>Desde</span>
-          <input id="f-desde" type="date" disabled>
-        </label>
-
-        <label class="field">
-          <span>Hasta</span>
-          <input id="f-hasta" type="date" disabled>
-        </label>
-
-        <label class="field">
-          <span>Paciente</span>
-          <input id="f-paciente" type="text" placeholder="Buscar por nombre o documento" disabled>
-        </label>
-
-        <label class="field">
-          <span>Medico</span>
-          <input id="f-medico" type="text" placeholder="Buscar por medico prescriptor" disabled>
-        </label>
-
-        <label class="field">
-          <span>Servicio / Especialidad</span>
-          <input id="f-servicio" type="text" placeholder="Ej.: Clinica Medica" disabled>
-        </label>
-
-        <div class="sidebar-note">
-          La siguiente fase conectara estos filtros a una exportacion real con datos anonimizados
-          o controlados segun el alcance que definamos.
+    <main class="content-grid">
+      <section class="card panel">
+        <div class="panel-head">
+          <h2>Top Pacientes</h2>
+          <span id="top-pacientes-meta" class="mini-meta"></span>
         </div>
-      </aside>
+        <div id="top-pacientes"></div>
+      </section>
 
-      <section class="content">
-        <section class="kpi-grid">
-          <article class="kpi card">
-            <span class="kpi-label">Recetas</span>
-            <strong id="kpi-recetas">0</strong>
-            <p>Recetas visibles en el corte cargado.</p>
-          </article>
-          <article class="kpi card">
-            <span class="kpi-label">Pacientes</span>
-            <strong id="kpi-pacientes">0</strong>
-            <p>Pacientes unicos dentro del conjunto publicado.</p>
-          </article>
-          <article class="kpi card">
-            <span class="kpi-label">Medicos</span>
-            <strong id="kpi-medicos">0</strong>
-            <p>Prescriptores unicos detectados.</p>
-          </article>
-          <article class="kpi card">
-            <span class="kpi-label">Productos</span>
-            <strong id="kpi-productos">0</strong>
-            <p>Productos recetados en el periodo.</p>
-          </article>
-        </section>
+      <section class="card panel">
+        <div class="panel-head">
+          <h2>Top Médicos</h2>
+          <span id="top-medicos-meta" class="mini-meta"></span>
+        </div>
+        <div id="top-medicos"></div>
+      </section>
 
-        <section class="roadmap-grid">
-          <article class="card panel">
-            <h2>Vista por Paciente</h2>
-            <p>
-              Historial de recetas, top productos, frecuencia de consulta, medicos asociados
-              y seguimiento temporal por paciente.
-            </p>
-          </article>
-
-          <article class="card panel">
-            <h2>Vista por Medico</h2>
-            <p>
-              Volumen de recetas, pacientes atendidos, productos mas prescritos y tendencia
-              comparativa entre prescriptores.
-            </p>
-          </article>
-
-          <article class="card panel">
-            <h2>Analitica Operativa</h2>
-            <p>
-              Cruces por servicio, ventanilla, cronico, receta impresa y otras dimensiones
-              que ya usamos en el tablero actual.
-            </p>
-          </article>
-
-          <article class="card panel">
-            <h2>Gobernanza de Datos</h2>
-            <p>
-              Espacio reservado para definir anonimización, permisos y politicas de acceso
-              antes de publicar informacion sensible.
-            </p>
-          </article>
-        </section>
-
-        <section class="card status-card">
-          <h2>Estado del proyecto</h2>
-          <div id="status-box" class="status-box">Cargando estructura base...</div>
-        </section>
-
-        <section class="card panel">
-          <h2>Proxima extraccion sugerida</h2>
-          <ul class="checklist">
-            <li>Identificador de receta</li>
-            <li>Paciente o identificador anonimizado</li>
-            <li>Medico prescriptor</li>
-            <li>Servicio / especialidad</li>
-            <li>Producto, cantidad recetada y cantidad dispensada</li>
-            <li>Fecha de receta y ventanilla de dispensacion</li>
-          </ul>
-        </section>
+      <section class="card panel wide">
+        <div class="panel-head">
+          <h2>Últimos Registros</h2>
+          <span id="status-box" class="mini-meta">Cargando datos...</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Receta</th>
+                <th>Paciente</th>
+                <th>Médico</th>
+                <th>Producto</th>
+                <th>Recetada</th>
+                <th>Dispensada</th>
+                <th>Ventanilla</th>
+              </tr>
+            </thead>
+            <tbody id="detail-body"></tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>
