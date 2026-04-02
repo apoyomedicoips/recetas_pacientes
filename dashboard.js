@@ -423,6 +423,12 @@ function ensureDefaultNetworkPatient(snapshot) {
   $("network-patient-filter").value = String(patient.id);
 }
 
+const NETWORK_LIMITS = {
+  doctors: 10,
+  products: 14,
+  patients: 6,
+};
+
 function buildFilteredNetwork(snapshot) {
   const doctorNodes = rowsToObjects(snapshot.nodes.medicos).map((item) => ({ ...item, type: "medico" }));
   const patientNodes = rowsToObjects(snapshot.nodes.pacientes).map((item) => ({ ...item, type: "paciente" }));
@@ -475,7 +481,45 @@ function buildFilteredNetwork(snapshot) {
   let patients = patientNodes.filter((node) => usedPatients.has(String(node.id)));
   let products = productNodes.filter((node) => usedProducts.has(String(node.id)));
 
-  return { doctors, patients, products, mp, pp, md };
+  const matchedPatients = patientFilter
+    ? patients.filter((node) => patientFilter.has(String(node.id)))
+    : [];
+  const focalPatient = matchedPatients.length
+    ? matchedPatients.sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))[0]
+    : patients.slice().sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))[0] || null;
+
+  if (focalPatient) {
+    const focalId = String(focalPatient.id);
+    mp = mp
+      .filter((edge) => String(edge.target) === focalId)
+      .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))
+      .slice(0, NETWORK_LIMITS.doctors);
+    pp = pp
+      .filter((edge) => String(edge.source) === focalId)
+      .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))
+      .slice(0, NETWORK_LIMITS.products);
+    md = [];
+
+    const doctorsSeen = new Set(mp.map((edge) => String(edge.source)));
+    const productsSeen = new Set(pp.map((edge) => String(edge.target)));
+    doctors = doctorNodes.filter((node) => doctorsSeen.has(String(node.id)));
+    products = productNodes.filter((node) => productsSeen.has(String(node.id)));
+    patients = [focalPatient];
+  } else {
+    const topPatients = patients
+      .slice()
+      .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))
+      .slice(0, NETWORK_LIMITS.patients);
+    const patientIds = new Set(topPatients.map((node) => String(node.id)));
+    mp = mp.filter((edge) => patientIds.has(String(edge.target))).slice(0, NETWORK_LIMITS.doctors * NETWORK_LIMITS.patients);
+    pp = pp.filter((edge) => patientIds.has(String(edge.source))).slice(0, NETWORK_LIMITS.products * NETWORK_LIMITS.patients);
+    md = [];
+    patients = topPatients;
+    doctors = doctorNodes.filter((node) => mp.some((edge) => String(edge.source) === String(node.id)));
+    products = productNodes.filter((node) => pp.some((edge) => String(edge.target) === String(node.id)));
+  }
+
+  return { doctors, patients, products, mp, pp, md, focalPatient };
 }
 
 function ensureNetworkSelection(allNodes) {
@@ -527,35 +571,22 @@ function renderNetworkGraph(snapshot, filtered) {
   const products = filtered.products;
   const edgeMP = filtered.mp;
   const edgePP = filtered.pp;
-  const edgeMD = filtered.md;
+  const focalPatient = filtered.focalPatient || patients[0] || null;
 
   ensureNetworkSelection([...doctors, ...patients, ...products]);
   const selected = state.selectedNetworkNode;
   const selectedKey = selected ? `${selected.type}:${selected.id}` : "";
   const W = 1240;
-  const H = 620;
+  const H = 560;
   const centerX = W / 2;
   const centerY = H / 2 + 8;
 
-  const focalPatient = patients.length === 1
-    ? patients[0]
-    : selected?.type === "paciente"
-      ? patients.find((item) => String(item.id) === String(selected.id)) || patients[0] || null
-      : patients.slice().sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))[0] || null;
-
   const doctorWeight = new Map();
   const productWeight = new Map();
-  const patientWeight = new Map();
   filtered.mp.forEach((edge) => {
     doctorWeight.set(String(edge.source), (doctorWeight.get(String(edge.source)) || 0) + Number(edge.recetas || 0));
-    patientWeight.set(String(edge.target), (patientWeight.get(String(edge.target)) || 0) + Number(edge.recetas || 0));
   });
   filtered.pp.forEach((edge) => {
-    patientWeight.set(String(edge.source), (patientWeight.get(String(edge.source)) || 0) + Number(edge.recetas || 0));
-    productWeight.set(String(edge.target), (productWeight.get(String(edge.target)) || 0) + Number(edge.recetas || 0));
-  });
-  filtered.md.forEach((edge) => {
-    doctorWeight.set(String(edge.source), (doctorWeight.get(String(edge.source)) || 0) + Number(edge.recetas || 0));
     productWeight.set(String(edge.target), (productWeight.get(String(edge.target)) || 0) + Number(edge.recetas || 0));
   });
 
@@ -580,15 +611,12 @@ function renderNetworkGraph(snapshot, filtered) {
 
   const doctorPos = arcPositions(doctors, Math.PI * 1.05, Math.PI * 1.72, 210, 26, doctorWeight, 2);
   const productPos = arcPositions(products, Math.PI * -0.68, Math.PI * 0.12, 210, 28, productWeight, 2);
-  const otherPatients = focalPatient ? patients.filter((item) => String(item.id) !== String(focalPatient.id)) : patients;
-  const patientOrbit = arcPositions(otherPatients, Math.PI * 0.35, Math.PI * 0.82, 150, 22, patientWeight, 1);
   const focalPos = focalPatient ? [{ ...focalPatient, x: centerX, y: centerY }] : [];
-  const nodeMap = new Map([...doctorPos, ...patientOrbit, ...focalPos, ...productPos].map((item) => [`${item.type}:${item.id}`, item]));
+  const nodeMap = new Map([...doctorPos, ...focalPos, ...productPos].map((item) => [`${item.type}:${item.id}`, item]));
 
   const allEdges = [
     ...edgeMP.map((edge) => ({ ...edge, sourceType: "medico", targetType: "paciente" })),
     ...edgePP.map((edge) => ({ ...edge, sourceType: "paciente", targetType: "producto" })),
-    ...edgeMD.map((edge) => ({ ...edge, sourceType: "medico", targetType: "producto", arc: true })),
   ];
   const maxRecipes = Math.max(...allEdges.map((edge) => Number(edge.recetas || 0)), 1);
   const nodeStats = new Map();
@@ -612,17 +640,12 @@ function renderNetworkGraph(snapshot, filtered) {
     if (!from || !to) return "";
     const active = !selectedKey || selectedKey === `${edge.sourceType}:${edge.source}` || selectedKey === `${edge.targetType}:${edge.target}`;
     const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * 6;
-    if (edge.arc) {
-      const cx = (from.x + to.x) / 2;
-      const cy = Math.min(from.y, to.y) - 84;
-      return `<path d="M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}" stroke="${active ? "#c0b2db" : "#e2d9ef"}" stroke-width="${Math.max(1, width - 1).toFixed(2)}" fill="none" opacity="${active ? 0.78 : 0.16}"></path>`;
-    }
     return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="${active ? "#8fb4da" : "#d7e3ef"}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" opacity="${active ? 0.9 : 0.24}"></line>`;
   }).join("");
 
   const headings = `
     <text x="${centerX}" y="42" text-anchor="middle" font-size="18" font-weight="700" fill="#102235">Nube relacional del mes ${esc(snapshot.mes)}</text>
-    <text x="${centerX}" y="64" text-anchor="middle" font-size="12" fill="#5f738a">Flujo visual: medicos -> paciente foco -> productos, ordenado por intensidad de relacion</text>
+    <text x="${centerX}" y="64" text-anchor="middle" font-size="12" fill="#5f738a">Vista liviana del paciente foco: medicos y productos mas relevantes del mes</text>
   `;
   const guideRings = `
     <circle cx="${centerX}" cy="${centerY}" r="92" fill="none" stroke="rgba(148,163,184,0.18)" stroke-dasharray="4 6"></circle>
@@ -630,7 +653,7 @@ function renderNetworkGraph(snapshot, filtered) {
     <circle cx="${centerX}" cy="${centerY}" r="268" fill="none" stroke="rgba(148,163,184,0.10)" stroke-dasharray="4 10"></circle>
   `;
 
-  const svgNodes = [...doctorPos, ...patientOrbit, ...focalPos, ...productPos].map((node) => {
+  const svgNodes = [...doctorPos, ...focalPos, ...productPos].map((node) => {
     const maxByType = Math.max(...(node.type === "medico" ? doctors : node.type === "paciente" ? patients : products).map((item) => Number(item.recetas || 0)), 1);
     const ratio = Number(node.recetas || 0) / maxByType;
     const color = nodeColor(node.type);
@@ -680,7 +703,7 @@ function renderNetworkGraph(snapshot, filtered) {
   });
 }
 
-function renderNetworkFocus(snapshot) {
+function renderNetworkFocus(snapshot, filtered) {
   if (!state.selectedNetworkNode) {
     $("network-focus").innerHTML = `<div class="empty-state">Seleccione un nodo para analizar relaciones.</div>`;
     return;
@@ -688,9 +711,9 @@ function renderNetworkFocus(snapshot) {
   const { type, id } = state.selectedNetworkNode;
   const label = getNodeLabel(snapshot, type, id);
   const edges = [
-    ...rowsToObjects(snapshot.edges.medico_paciente).map((item) => ({ ...item, edgeType: "medico_paciente" })),
-    ...rowsToObjects(snapshot.edges.paciente_producto).map((item) => ({ ...item, edgeType: "paciente_producto" })),
-    ...rowsToObjects(snapshot.edges.medico_producto).map((item) => ({ ...item, edgeType: "medico_producto" })),
+    ...filtered.mp.map((item) => ({ ...item, edgeType: "medico_paciente" })),
+    ...filtered.pp.map((item) => ({ ...item, edgeType: "paciente_producto" })),
+    ...filtered.md.map((item) => ({ ...item, edgeType: "medico_producto" })),
   ].filter((edge) => String(edge.source) === String(id) || String(edge.target) === String(id));
 
   const totalLinks = edges.length;
@@ -720,11 +743,10 @@ function renderNetworkLinks(snapshot, filtered) {
   const edges = [
     ...filtered.mp.map((item) => ({ ...item, edgeType: "Medico -> Paciente", sourceType: "medico", targetType: "paciente" })),
     ...filtered.pp.map((item) => ({ ...item, edgeType: "Paciente -> Producto", sourceType: "paciente", targetType: "producto" })),
-    ...filtered.md.map((item) => ({ ...item, edgeType: "Medico -> Producto", sourceType: "medico", targetType: "producto" })),
   ].filter((edge) => {
     if (!selected) return true;
     return String(edge.source) === String(selected.id) || String(edge.target) === String(selected.id);
-  }).sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0)).slice(0, 30);
+  }).sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0)).slice(0, 20);
 
   if (!edges.length) {
     body.innerHTML = `<tr><td colspan="4" class="empty-state">Sin conexiones visibles para este nodo.</td></tr>`;
@@ -876,13 +898,14 @@ async function renderNetworkView() {
   if (!snapshot) return;
   ensureDefaultNetworkPatient(snapshot);
   const filtered = buildFilteredNetwork(snapshot);
-  $("network-meta").textContent = `Mes ${snapshot.mes} · subred centrada en paciente`;
+  const patientLabel = filtered.focalPatient ? (filtered.focalPatient.label || filtered.focalPatient.id) : "sin foco";
+  $("network-meta").textContent = `Mes ${snapshot.mes} · foco ${patientLabel}`;
   renderNetworkMonthOptions();
   populateNetworkDatalists(snapshot);
   renderNetworkKpis(snapshot);
   renderNetworkGraph(snapshot, filtered);
   renderNetworkAlerts(snapshot, filtered);
-  renderNetworkFocus(snapshot);
+  renderNetworkFocus(snapshot, filtered);
   renderNetworkLinks(snapshot, filtered);
 }
 
