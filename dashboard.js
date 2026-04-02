@@ -498,10 +498,12 @@ function buildFilteredNetwork(snapshot) {
       .filter((edge) => String(edge.source) === focalId)
       .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))
       .slice(0, NETWORK_LIMITS.products);
-    md = [];
 
     const doctorsSeen = new Set(mp.map((edge) => String(edge.source)));
     const productsSeen = new Set(pp.map((edge) => String(edge.target)));
+    md = md
+      .filter((edge) => doctorsSeen.has(String(edge.source)) && productsSeen.has(String(edge.target)))
+      .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0));
     doctors = doctorNodes.filter((node) => doctorsSeen.has(String(node.id)));
     products = productNodes.filter((node) => productsSeen.has(String(node.id)));
     patients = [focalPatient];
@@ -570,12 +572,80 @@ function shortNodeLabel(label, max = 28) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function extractTimelineMonth(snapshot, patientId) {
+  const patient = rowsToObjects(snapshot.nodes.pacientes).find((item) => String(item.id) === String(patientId));
+  if (!patient) return null;
+
+  const doctorEdge = rowsToObjects(snapshot.edges.medico_paciente)
+    .filter((edge) => String(edge.target) === String(patientId))
+    .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))[0];
+  const productEdge = rowsToObjects(snapshot.edges.paciente_producto)
+    .filter((edge) => String(edge.source) === String(patientId))
+    .sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))[0];
+
+  return {
+    mes: snapshot.mes,
+    recetas: Number(patient.recetas || 0),
+    doctor: doctorEdge ? getNodeLabel(snapshot, "medico", doctorEdge.source) : "",
+    producto: productEdge ? getNodeLabel(snapshot, "producto", productEdge.target) : "",
+  };
+}
+
+async function renderNetworkTimeline(filtered) {
+  const root = $("network-timeline");
+  const patientId = filtered.focalPatient?.id;
+  if (!patientId) {
+    root.innerHTML = "";
+    return;
+  }
+
+  const months = state.networkIndex?.months || [];
+  const currentIdx = months.findIndex((item) => item.mes === state.selectedNetworkMonth);
+  const start = Math.max(0, currentIdx - 2);
+  const end = Math.min(months.length, currentIdx + 3);
+  const windowMonths = months.slice(start, end);
+  const snapshots = await Promise.all(windowMonths.map((item) => loadNetworkMonth(item.mes)));
+  const timeline = snapshots.map((item) => extractTimelineMonth(item, patientId));
+
+  root.innerHTML = timeline.map((item, idx) => {
+    const month = windowMonths[idx].mes;
+    if (!item) {
+      return `
+        <article class="timeline-card empty">
+          <div class="timeline-month">${esc(month)}</div>
+          <span class="timeline-detail">Sin actividad del paciente en este mes.</span>
+          ${month !== state.selectedNetworkMonth ? `<button class="timeline-jump" data-month="${esc(month)}" type="button">Ver mes</button>` : ""}
+        </article>
+      `;
+    }
+    return `
+      <article class="timeline-card ${month === state.selectedNetworkMonth ? "active" : ""}">
+        <div class="timeline-month">${esc(item.mes)}</div>
+        <span class="timeline-metric">${fmtInt(item.recetas)} recetas</span>
+        <span class="timeline-detail">Médico dominante: ${esc(shortNodeLabel(item.doctor || "-", 24))}</span>
+        <span class="timeline-detail">Producto dominante: ${esc(shortNodeLabel(item.producto || "-", 24))}</span>
+        ${month !== state.selectedNetworkMonth ? `<button class="timeline-jump" data-month="${esc(month)}" type="button">Ver mes</button>` : ""}
+      </article>
+    `;
+  }).join("");
+
+  root.querySelectorAll(".timeline-jump").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.selectedNetworkMonth = btn.dataset.month;
+      state.selectedNetworkNode = null;
+      $("network-month").value = btn.dataset.month;
+      renderNetworkView();
+    });
+  });
+}
+
 function renderNetworkGraph(snapshot, filtered) {
   const doctors = filtered.doctors;
   const patients = filtered.patients;
   const products = filtered.products;
   const edgeMP = filtered.mp;
   const edgePP = filtered.pp;
+  const edgeMD = filtered.md;
   const focalPatient = filtered.focalPatient || patients[0] || null;
 
   ensureNetworkSelection([...doctors, ...patients, ...products]);
@@ -634,9 +704,18 @@ function renderNetworkGraph(snapshot, filtered) {
     ...edgeMP.map((edge) => ({ ...edge, sourceType: "medico", targetType: "paciente" })),
     ...edgePP.map((edge) => ({ ...edge, sourceType: "paciente", targetType: "producto" })),
   ];
+  const selectedSupportEdges = selected?.type === "medico"
+    ? edgeMD
+        .filter((edge) => String(edge.source) === String(selected.id))
+        .map((edge) => ({ ...edge, sourceType: "medico", targetType: "producto", derived: true }))
+    : selected?.type === "producto"
+      ? edgeMD
+          .filter((edge) => String(edge.target) === String(selected.id))
+          .map((edge) => ({ ...edge, sourceType: "medico", targetType: "producto", derived: true }))
+      : [];
   const maxRecipes = Math.max(...allEdges.map((edge) => Number(edge.recetas || 0)), 1);
   const nodeStats = new Map();
-  allEdges.forEach((edge) => {
+  [...allEdges, ...selectedSupportEdges].forEach((edge) => {
     const sourceKey = `${edge.sourceType}:${edge.source}`;
     const targetKey = `${edge.targetType}:${edge.target}`;
     if (!nodeStats.has(sourceKey)) nodeStats.set(sourceKey, { links: 0, recetas: 0, counterparts: new Set() });
@@ -650,19 +729,22 @@ function renderNetworkGraph(snapshot, filtered) {
     nodeStats.get(targetKey).counterparts.add(sourceKey);
   });
 
-  const svgEdges = allEdges.map((edge) => {
+  const svgEdges = [...allEdges, ...selectedSupportEdges].map((edge) => {
     const from = nodeMap.get(`${edge.sourceType}:${edge.source}`);
     const to = nodeMap.get(`${edge.targetType}:${edge.target}`);
     if (!from || !to) return "";
-    const active = !selectedKey || selectedKey === `${edge.sourceType}:${edge.source}` || selectedKey === `${edge.targetType}:${edge.target}`;
-    const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * 18;
+    const active = edge.derived || !selectedKey || selectedKey === `${edge.sourceType}:${edge.source}` || selectedKey === `${edge.targetType}:${edge.target}`;
+    const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * (edge.derived ? 12 : 18);
     const x1 = from.x + from.w;
     const y1 = from.cy;
     const x2 = to.x;
     const y2 = to.cy;
     const cx1 = x1 + (x2 - x1) * 0.28;
     const cx2 = x1 + (x2 - x1) * 0.72;
-    return `<path d="M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}" stroke="${active ? "#8fb4da" : "#d7e3ef"}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" fill="none" opacity="${active ? 0.82 : 0.18}"></path>`;
+    const stroke = edge.derived ? "#7c3aed" : active ? "#8fb4da" : "#d7e3ef";
+    const dash = edge.derived ? ` stroke-dasharray="7 6"` : "";
+    const opacity = edge.derived ? 0.72 : active ? 0.82 : 0.18;
+    return `<path d="M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}" stroke="${stroke}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" fill="none" opacity="${opacity}"${dash}></path>`;
   }).join("");
 
   const headings = `
@@ -930,6 +1012,7 @@ async function renderNetworkView() {
   populateNetworkDatalists(snapshot);
   renderNetworkKpis(snapshot);
   renderNetworkGraph(snapshot, filtered);
+  await renderNetworkTimeline(filtered);
   renderNetworkAlerts(snapshot, filtered);
   renderNetworkFocus(snapshot, filtered);
   renderNetworkLinks(snapshot, filtered);
