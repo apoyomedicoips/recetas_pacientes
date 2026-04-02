@@ -19,6 +19,7 @@
         <button class="nav-btn active" data-view="overview">Resumen</button>
         <button class="nav-btn" data-view="patients">Pacientes</button>
         <button class="nav-btn" data-view="doctors">Médicos</button>
+        <button class="nav-btn" data-view="network">Red</button>
       </nav>
 
       <div class="sidebar-meta card">
@@ -204,6 +205,60 @@
               </div>
             </article>
           </div>
+        </section>
+      </section>
+
+      <section id="view-network" class="view-section">
+        <section class="network-stack">
+          <article class="card panel">
+            <div class="panel-head">
+              <h3>Red médico, paciente y producto</h3>
+              <span id="network-meta" class="mini-meta">Cargando...</span>
+            </div>
+            <div class="network-toolbar">
+              <label class="control inline-control">
+                <span>Mes</span>
+                <select id="network-month"></select>
+              </label>
+              <div id="network-kpis" class="network-kpis"></div>
+            </div>
+            <div id="network-graph" class="network-graph"></div>
+            <div class="chart-legend">
+              <span><span class="legend-dot" style="background:#1f5d96"></span>Médicos</span>
+              <span><span class="legend-dot" style="background:#0f766e"></span>Pacientes</span>
+              <span><span class="legend-dot" style="background:#d97706"></span>Productos</span>
+            </div>
+          </article>
+
+          <section class="overview-grid network-bottom">
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Foco de nodo</h3>
+                <span class="mini-meta">Relaciones del nodo seleccionado</span>
+              </div>
+              <div id="network-focus"></div>
+            </article>
+
+            <article class="card panel">
+              <div class="panel-head">
+                <h3>Conexiones relevantes</h3>
+                <span class="mini-meta">Enlaces del mes filtrado</span>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Origen</th>
+                      <th>Destino</th>
+                      <th>Tipo</th>
+                      <th>Recetas</th>
+                    </tr>
+                  </thead>
+                  <tbody id="network-links-body"></tbody>
+                </table>
+              </div>
+            </article>
+          </section>
         </section>
       </section>
     </main>
