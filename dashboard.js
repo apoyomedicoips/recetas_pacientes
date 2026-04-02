@@ -565,6 +565,11 @@ function hideNetworkTooltip() {
   $("network-tooltip").classList.add("hidden");
 }
 
+function shortNodeLabel(label, max = 28) {
+  const text = String(label || "");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 function renderNetworkGraph(snapshot, filtered) {
   const doctors = filtered.doctors;
   const patients = filtered.patients;
@@ -576,17 +581,20 @@ function renderNetworkGraph(snapshot, filtered) {
   ensureNetworkSelection([...doctors, ...patients, ...products]);
   const selected = state.selectedNetworkNode;
   const selectedKey = selected ? `${selected.type}:${selected.id}` : "";
-  const W = 1240;
+  const W = 1180;
   const H = 560;
-  const centerX = W / 2;
-  const centerY = H / 2 + 8;
+  const topY = 104;
+  const laneHeight = 360;
+  const nodeWidth = 206;
+  const nodeRadius = 16;
+  const xCols = { medico: 70, paciente: 488, producto: 904 };
 
   const doctorWeight = new Map();
   const productWeight = new Map();
-  filtered.mp.forEach((edge) => {
+  edgeMP.forEach((edge) => {
     doctorWeight.set(String(edge.source), (doctorWeight.get(String(edge.source)) || 0) + Number(edge.recetas || 0));
   });
-  filtered.pp.forEach((edge) => {
+  edgePP.forEach((edge) => {
     productWeight.set(String(edge.target), (productWeight.get(String(edge.target)) || 0) + Number(edge.recetas || 0));
   });
 
@@ -595,23 +603,31 @@ function renderNetworkGraph(snapshot, filtered) {
     return diff || String(a.label || a.id).localeCompare(String(b.label || b.id), "es");
   });
 
-  function arcPositions(nodes, startAngle, endAngle, radiusBase, radiusStep, weights, wave = 0) {
+  function stackPositions(nodes, type, weights) {
     const ranked = sortByWeight(nodes, weights);
-    const count = ranked.length;
+    const totalWeight = Math.max(ranked.reduce((acc, node) => acc + Number(weights.get(String(node.id)) || node.recetas || 1), 0), 1);
+    const gap = 12;
+    const available = laneHeight - Math.max(0, ranked.length - 1) * gap;
+    let cursor = topY;
     return ranked.map((node, idx) => {
-      const angle = count === 1 ? (startAngle + endAngle) / 2 : startAngle + ((endAngle - startAngle) * idx) / (count - 1);
-      const radius = radiusBase + (idx % 3) * radiusStep + wave * idx;
-      return {
-        ...node,
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius,
-      };
+      const weight = Number(weights.get(String(node.id)) || node.recetas || 1);
+      const height = ranked.length === 1 ? Math.max(84, available) : Math.max(34, (weight / totalWeight) * available);
+      const y = idx === ranked.length - 1 ? topY + laneHeight - height : cursor;
+      cursor = y + height + gap;
+      return { ...node, x: xCols[type], y, w: nodeWidth, h: height, cy: y + height / 2 };
     });
   }
 
-  const doctorPos = arcPositions(doctors, Math.PI * 1.05, Math.PI * 1.72, 210, 26, doctorWeight, 2);
-  const productPos = arcPositions(products, Math.PI * -0.68, Math.PI * 0.12, 210, 28, productWeight, 2);
-  const focalPos = focalPatient ? [{ ...focalPatient, x: centerX, y: centerY }] : [];
+  const doctorPos = stackPositions(doctors, "medico", doctorWeight);
+  const productPos = stackPositions(products, "producto", productWeight);
+  const focalPos = focalPatient ? [{
+    ...focalPatient,
+    x: xCols.paciente,
+    y: topY + laneHeight / 2 - 64,
+    w: nodeWidth,
+    h: 128,
+    cy: topY + laneHeight / 2,
+  }] : [];
   const nodeMap = new Map([...doctorPos, ...focalPos, ...productPos].map((item) => [`${item.type}:${item.id}`, item]));
 
   const allEdges = [
@@ -639,18 +655,27 @@ function renderNetworkGraph(snapshot, filtered) {
     const to = nodeMap.get(`${edge.targetType}:${edge.target}`);
     if (!from || !to) return "";
     const active = !selectedKey || selectedKey === `${edge.sourceType}:${edge.source}` || selectedKey === `${edge.targetType}:${edge.target}`;
-    const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * 6;
-    return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="${active ? "#8fb4da" : "#d7e3ef"}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" opacity="${active ? 0.9 : 0.24}"></line>`;
+    const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * 18;
+    const x1 = from.x + from.w;
+    const y1 = from.cy;
+    const x2 = to.x;
+    const y2 = to.cy;
+    const cx1 = x1 + (x2 - x1) * 0.28;
+    const cx2 = x1 + (x2 - x1) * 0.72;
+    return `<path d="M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}" stroke="${active ? "#8fb4da" : "#d7e3ef"}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" fill="none" opacity="${active ? 0.82 : 0.18}"></path>`;
   }).join("");
 
   const headings = `
-    <text x="${centerX}" y="42" text-anchor="middle" font-size="18" font-weight="700" fill="#102235">Nube relacional del mes ${esc(snapshot.mes)}</text>
-    <text x="${centerX}" y="64" text-anchor="middle" font-size="12" fill="#5f738a">Vista liviana del paciente foco: medicos y productos mas relevantes del mes</text>
+    <text x="${W / 2}" y="40" text-anchor="middle" font-size="18" font-weight="700" fill="#102235">Flujo clinico del mes ${esc(snapshot.mes)}</text>
+    <text x="${W / 2}" y="62" text-anchor="middle" font-size="12" fill="#5f738a">Medicos que prescriben, paciente foco y productos principales del periodo</text>
+    <text x="${xCols.medico + nodeWidth / 2}" y="88" text-anchor="middle" font-size="12" font-weight="700" fill="#1f5d96">Medicos</text>
+    <text x="${xCols.paciente + nodeWidth / 2}" y="88" text-anchor="middle" font-size="12" font-weight="700" fill="#0f766e">Paciente foco</text>
+    <text x="${xCols.producto + nodeWidth / 2}" y="88" text-anchor="middle" font-size="12" font-weight="700" fill="#d97706">Productos</text>
   `;
-  const guideRings = `
-    <circle cx="${centerX}" cy="${centerY}" r="92" fill="none" stroke="rgba(148,163,184,0.18)" stroke-dasharray="4 6"></circle>
-    <circle cx="${centerX}" cy="${centerY}" r="214" fill="none" stroke="rgba(148,163,184,0.16)" stroke-dasharray="4 8"></circle>
-    <circle cx="${centerX}" cy="${centerY}" r="268" fill="none" stroke="rgba(148,163,184,0.10)" stroke-dasharray="4 10"></circle>
+  const guides = `
+    <rect x="${xCols.medico}" y="${topY}" width="${nodeWidth}" height="${laneHeight}" rx="20" fill="rgba(31,93,150,0.03)" stroke="rgba(31,93,150,0.08)"></rect>
+    <rect x="${xCols.paciente}" y="${topY}" width="${nodeWidth}" height="${laneHeight}" rx="20" fill="rgba(15,118,110,0.03)" stroke="rgba(15,118,110,0.08)"></rect>
+    <rect x="${xCols.producto}" y="${topY}" width="${nodeWidth}" height="${laneHeight}" rx="20" fill="rgba(217,119,6,0.03)" stroke="rgba(217,119,6,0.08)"></rect>
   `;
 
   const svgNodes = [...doctorPos, ...focalPos, ...productPos].map((node) => {
@@ -660,9 +685,9 @@ function renderNetworkGraph(snapshot, filtered) {
     const active = selectedKey === `${node.type}:${node.id}`;
     const isFocal = focalPatient && node.type === "paciente" && String(node.id) === String(focalPatient.id);
     const fill = active || isFocal ? color : nodeTint(node.type, ratio);
-    const textFill = active ? "#ffffff" : "#102235";
+    const textFill = active || isFocal ? "#ffffff" : "#102235";
+    const subFill = active || isFocal ? "#dbeafe" : "rgba(16,34,53,0.72)";
     const border = active || isFocal ? color : "rgba(16,34,53,0.12)";
-    const radius = (isFocal ? 28 : 13) + ratio * (isFocal ? 22 : 18);
     const stats = nodeStats.get(`${node.type}:${node.id}`) || { links: 0, recetas: 0, counterparts: new Set() };
     return `
       <g class="network-node" data-node-type="${node.type}" data-node-id="${esc(node.id)}" style="cursor:pointer"
@@ -670,13 +695,14 @@ function renderNetworkGraph(snapshot, filtered) {
          data-node-recetas="${esc(node.recetas)}"
          data-node-links="${esc(stats.links)}"
          data-node-counterparts="${esc(stats.counterparts.size)}">
-        <circle cx="${node.x}" cy="${node.y}" r="${radius.toFixed(1)}" fill="${fill}" stroke="${border}" stroke-width="${active ? 2.5 : 1.1}"></circle>
-        <text x="${node.x}" y="${node.y + 4}" text-anchor="middle" font-size="${isFocal ? 12 : 10}" font-weight="700" fill="${textFill}">${esc(String(node.type).charAt(0).toUpperCase())}</text>
+        <rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="${nodeRadius}" fill="${fill}" stroke="${border}" stroke-width="${active ? 2.5 : 1.1}"></rect>
+        <text x="${node.x + 14}" y="${node.y + 24}" font-size="11" font-weight="700" fill="${textFill}">${esc(shortNodeLabel(node.label || node.id, node.type === "producto" ? 30 : 26))}</text>
+        <text x="${node.x + 14}" y="${node.y + 42}" font-size="10" fill="${subFill}">${fmtInt(node.recetas)} recetas</text>
       </g>
     `;
   }).join("");
 
-  $("network-graph").innerHTML = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="min-width:${W}px;display:block">${headings}${guideRings}${svgEdges}${svgNodes}</svg>`;
+  $("network-graph").innerHTML = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="min-width:${W}px;display:block">${headings}${guides}${svgEdges}${svgNodes}</svg>`;
 
   $("network-graph").querySelectorAll(".network-node").forEach((nodeEl) => {
     nodeEl.addEventListener("click", () => {
