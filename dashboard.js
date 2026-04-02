@@ -623,6 +623,120 @@ function renderNetworkLinks(snapshot, filtered) {
   `).join("");
 }
 
+function ratioLabel(part, total) {
+  if (!total) return "0.0%";
+  return `${((part / total) * 100).toFixed(1)}%`;
+}
+
+function buildNetworkAlerts(snapshot, filtered) {
+  const alerts = [];
+
+  const doctorTotals = new Map();
+  const patientTotals = new Map();
+  const productDoctorSet = new Map();
+
+  filtered.mp.forEach((edge) => {
+    const recetas = Number(edge.recetas || 0);
+    if (!doctorTotals.has(edge.source)) doctorTotals.set(edge.source, { total: 0, max: 0, patientId: "" });
+    const doctor = doctorTotals.get(edge.source);
+    doctor.total += recetas;
+    if (recetas > doctor.max) {
+      doctor.max = recetas;
+      doctor.patientId = edge.target;
+    }
+  });
+
+  filtered.pp.forEach((edge) => {
+    const recetas = Number(edge.recetas || 0);
+    if (!patientTotals.has(edge.source)) patientTotals.set(edge.source, { total: 0, products: 0, topProductId: "", topProductValue: 0 });
+    const patient = patientTotals.get(edge.source);
+    patient.total += recetas;
+    patient.products += 1;
+    if (recetas > patient.topProductValue) {
+      patient.topProductValue = recetas;
+      patient.topProductId = edge.target;
+    }
+  });
+
+  filtered.md.forEach((edge) => {
+    const key = String(edge.target);
+    if (!productDoctorSet.has(key)) productDoctorSet.set(key, { doctors: new Set(), total: 0 });
+    const bucket = productDoctorSet.get(key);
+    bucket.doctors.add(String(edge.source));
+    bucket.total += Number(edge.recetas || 0);
+  });
+
+  let mostConcentratedDoctor = null;
+  doctorTotals.forEach((value, key) => {
+    const ratio = value.total ? value.max / value.total : 0;
+    if (!mostConcentratedDoctor || ratio > mostConcentratedDoctor.ratio) {
+      mostConcentratedDoctor = { doctorId: key, ratio, total: value.total, patientId: value.patientId, max: value.max };
+    }
+  });
+  if (mostConcentratedDoctor) {
+    alerts.push({
+      tone: mostConcentratedDoctor.ratio >= 0.6 ? "risk" : "warn",
+      title: "Concentracion medico-paciente",
+      text: `${getNodeLabel(snapshot, "medico", mostConcentratedDoctor.doctorId)} concentra ${ratioLabel(mostConcentratedDoctor.max, mostConcentratedDoctor.total)} de sus recetas visibles en ${getNodeLabel(snapshot, "paciente", mostConcentratedDoctor.patientId)}.`,
+    });
+  }
+
+  let mostPolypharmacy = null;
+  patientTotals.forEach((value, key) => {
+    if (!mostPolypharmacy || value.products > mostPolypharmacy.products || (value.products === mostPolypharmacy.products && value.total > mostPolypharmacy.total)) {
+      mostPolypharmacy = { patientId: key, ...value };
+    }
+  });
+  if (mostPolypharmacy) {
+    alerts.push({
+      tone: mostPolypharmacy.products >= 6 ? "risk" : "info",
+      title: "Paciente con mayor polifarmacia",
+      text: `${getNodeLabel(snapshot, "paciente", mostPolypharmacy.patientId)} conecta con ${fmtInt(mostPolypharmacy.products)} productos en la subred visible.`,
+    });
+  }
+
+  let mostDependentProduct = null;
+  productDoctorSet.forEach((value, key) => {
+    if (!mostDependentProduct || value.doctors.size < mostDependentProduct.doctors || (value.doctors.size === mostDependentProduct.doctors && value.total > mostDependentProduct.total)) {
+      mostDependentProduct = { productId: key, doctors: value.doctors.size, total: value.total };
+    }
+  });
+  if (mostDependentProduct) {
+    alerts.push({
+      tone: mostDependentProduct.doctors <= 2 ? "warn" : "info",
+      title: "Producto dependiente de pocos medicos",
+      text: `${getNodeLabel(snapshot, "producto", mostDependentProduct.productId)} depende de ${fmtInt(mostDependentProduct.doctors)} medicos visibles para ${fmtInt(mostDependentProduct.total)} recetas.`,
+    });
+  }
+
+  const dominantEdge = [
+    ...filtered.mp.map((edge) => ({ ...edge, label: "Medico -> Paciente", sourceType: "medico", targetType: "paciente" })),
+    ...filtered.pp.map((edge) => ({ ...edge, label: "Paciente -> Producto", sourceType: "paciente", targetType: "producto" })),
+    ...filtered.md.map((edge) => ({ ...edge, label: "Medico -> Producto", sourceType: "medico", targetType: "producto" })),
+  ].sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0))[0];
+  if (dominantEdge) {
+    alerts.push({
+      tone: "info",
+      title: "Vinculo dominante",
+      text: `${dominantEdge.label}: ${getNodeLabel(snapshot, dominantEdge.sourceType, dominantEdge.source)} con ${getNodeLabel(snapshot, dominantEdge.targetType, dominantEdge.target)} suma ${fmtInt(dominantEdge.recetas)} recetas.`,
+    });
+  }
+
+  return alerts;
+}
+
+function renderNetworkAlerts(snapshot, filtered) {
+  const alerts = buildNetworkAlerts(snapshot, filtered);
+  $("network-alerts").innerHTML = alerts.length
+    ? alerts.map((alert) => `
+      <article class="alert-card ${esc(alert.tone)}">
+        <strong>${esc(alert.title)}</strong>
+        <p>${esc(alert.text)}</p>
+      </article>
+    `).join("")
+    : `<article class="alert-card info"><strong>Sin alertas</strong><p>No hay suficiente densidad en la subred visible para construir señales gerenciales.</p></article>`;
+}
+
 function renderNetworkMonthOptions() {
   const months = state.networkIndex?.months || [];
   $("network-month").innerHTML = months.map((item) => `<option value="${esc(item.mes)}">${esc(item.mes)}</option>`).join("");
@@ -648,6 +762,7 @@ async function renderNetworkView() {
   populateNetworkDatalists(snapshot);
   renderNetworkKpis(snapshot);
   renderNetworkGraph(snapshot, filtered);
+  renderNetworkAlerts(snapshot, filtered);
   renderNetworkFocus(snapshot);
   renderNetworkLinks(snapshot, filtered);
 }
