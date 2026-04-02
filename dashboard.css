@@ -84,6 +84,18 @@ body {
   border-color: rgba(255, 255, 255, 0.32);
 }
 
+.nav-btn-light {
+  background: #f8fbff;
+  color: var(--txt);
+  border: 1px solid var(--line);
+  min-height: 46px;
+}
+
+.nav-btn-light:hover {
+  background: #eef6ff;
+  border-color: var(--line-strong);
+}
+
 .main-shell {
   padding: 24px;
   display: grid;

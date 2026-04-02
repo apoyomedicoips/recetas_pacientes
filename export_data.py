@@ -225,16 +225,16 @@ ORDER BY medico_id, mes
     ),
 }
 
-network_data = {
+network_months = [row[0] for row in con.execute(base_cte + "SELECT DISTINCT mes FROM base ORDER BY mes DESC").fetchall()]
+network_index = {
     "metadata": overview["metadata"],
-    "months": [row[0] for row in con.execute(base_cte + "SELECT DISTINCT mes FROM base ORDER BY mes DESC").fetchall()],
-    "snapshots": [],
+    "months": [],
 }
 
-network_months = network_data["months"][:18]
 for month in network_months:
     month_sql = f"WHERE mes = '{month}'"
-    month_snapshot = {
+    filename = f"network_{month.replace('-', '_')}.json"
+    month_payload = {
         "mes": month,
         "kpis": {},
         "nodes": {},
@@ -253,17 +253,18 @@ FROM base
 {month_sql}
 """
     ).fetchone()
-    month_snapshot["kpis"] = {
+    month_payload["kpis"] = {
         "total_recetas": int(month_kpis[0] or 0),
         "total_medicos": int(month_kpis[1] or 0),
         "total_pacientes": int(month_kpis[2] or 0),
         "total_productos": int(month_kpis[3] or 0),
     }
 
-    doctor_nodes = fetch_block(
-        con,
-        base_cte
-        + f"""
+    month_payload["nodes"] = {
+        "medicos": fetch_block(
+            con,
+            base_cte
+            + f"""
 SELECT
     medico_id AS id,
     medico_nombre AS label,
@@ -272,13 +273,12 @@ FROM base
 {month_sql} AND medico_id IS NOT NULL
 GROUP BY 1,2
 ORDER BY recetas DESC, label
-LIMIT 12
 """
-    )
-    patient_nodes = fetch_block(
-        con,
-        base_cte
-        + f"""
+        ),
+        "pacientes": fetch_block(
+            con,
+            base_cte
+            + f"""
 SELECT
     paciente_id AS id,
     paciente_nombre AS label,
@@ -287,13 +287,12 @@ FROM base
 {month_sql} AND paciente_id IS NOT NULL
 GROUP BY 1,2
 ORDER BY recetas DESC, label
-LIMIT 18
 """
-    )
-    product_nodes = fetch_block(
-        con,
-        base_cte
-        + f"""
+        ),
+        "productos": fetch_block(
+            con,
+            base_cte
+            + f"""
 SELECT
     producto_codigo AS id,
     producto AS label,
@@ -302,28 +301,10 @@ FROM base
 {month_sql} AND producto_codigo IS NOT NULL
 GROUP BY 1,2
 ORDER BY recetas DESC, label
-LIMIT 14
 """
-    )
-
-    doctor_ids = [row[0] for row in doctor_nodes["rows"]]
-    patient_ids = [row[0] for row in patient_nodes["rows"]]
-    product_ids = [row[0] for row in product_nodes["rows"]]
-
-    def sql_list(values):
-        escaped = [str(v).replace("'", "''") for v in values if v is not None]
-        return ",".join(f"'{item}'" for item in escaped) or "''"
-
-    doctor_filter = sql_list(doctor_ids)
-    patient_filter = sql_list(patient_ids)
-    product_filter = sql_list(product_ids)
-
-    month_snapshot["nodes"] = {
-        "medicos": doctor_nodes,
-        "pacientes": patient_nodes,
-        "productos": product_nodes,
+        ),
     }
-    month_snapshot["edges"] = {
+    month_payload["edges"] = {
         "medico_paciente": fetch_block(
             con,
             base_cte
@@ -334,11 +315,10 @@ SELECT
     COUNT(DISTINCT receta_id) AS recetas
 FROM base
 {month_sql}
-  AND medico_id IN ({doctor_filter})
-  AND paciente_id IN ({patient_filter})
+  AND medico_id IS NOT NULL
+  AND paciente_id IS NOT NULL
 GROUP BY 1,2
 ORDER BY recetas DESC, source, target
-LIMIT 120
 """
         ),
         "paciente_producto": fetch_block(
@@ -351,11 +331,10 @@ SELECT
     COUNT(DISTINCT receta_id) AS recetas
 FROM base
 {month_sql}
-  AND paciente_id IN ({patient_filter})
-  AND producto_codigo IN ({product_filter})
+  AND paciente_id IS NOT NULL
+  AND producto_codigo IS NOT NULL
 GROUP BY 1,2
 ORDER BY recetas DESC, source, target
-LIMIT 160
 """
         ),
         "medico_producto": fetch_block(
@@ -368,15 +347,23 @@ SELECT
     COUNT(DISTINCT receta_id) AS recetas
 FROM base
 {month_sql}
-  AND medico_id IN ({doctor_filter})
-  AND producto_codigo IN ({product_filter})
+  AND medico_id IS NOT NULL
+  AND producto_codigo IS NOT NULL
 GROUP BY 1,2
 ORDER BY recetas DESC, source, target
-LIMIT 120
 """
         ),
     }
-    network_data["snapshots"].append(month_snapshot)
+
+    (OUT_DIR / filename).write_text(
+        json.dumps(month_payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    network_index["months"].append({
+        "mes": month,
+        "file": filename,
+        **month_payload["kpis"],
+    })
 
 (OUT_DIR / "data.json").write_text(
     json.dumps(overview, ensure_ascii=False, separators=(",", ":")),
@@ -390,8 +377,8 @@ LIMIT 120
     json.dumps(doctors_data, ensure_ascii=False, separators=(",", ":")),
     encoding="utf-8",
 )
-(OUT_DIR / "network_data.json").write_text(
-    json.dumps(network_data, ensure_ascii=False, separators=(",", ":")),
+(OUT_DIR / "network_index.json").write_text(
+    json.dumps(network_index, ensure_ascii=False, separators=(",", ":")),
     encoding="utf-8",
 )
 
@@ -401,4 +388,4 @@ print("Generados:")
 print("-", OUT_DIR / "data.json")
 print("-", OUT_DIR / "pacientes_data.json")
 print("-", OUT_DIR / "medicos_data.json")
-print("-", OUT_DIR / "network_data.json")
+print("-", OUT_DIR / "network_index.json")

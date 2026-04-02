@@ -220,6 +220,22 @@
                 <span>Mes</span>
                 <select id="network-month"></select>
               </label>
+              <label class="control inline-control">
+                <span>Filtrar médico</span>
+                <input id="network-doctor-filter" list="network-doctors-list" type="text" placeholder="Codigo o nombre">
+                <datalist id="network-doctors-list"></datalist>
+              </label>
+              <label class="control inline-control">
+                <span>Filtrar paciente</span>
+                <input id="network-patient-filter" list="network-patients-list" type="text" placeholder="Cedula o nombre">
+                <datalist id="network-patients-list"></datalist>
+              </label>
+              <label class="control inline-control">
+                <span>Filtrar medicamento</span>
+                <input id="network-product-filter" list="network-products-list" type="text" placeholder="SAP o descripcion">
+                <datalist id="network-products-list"></datalist>
+              </label>
+              <button id="network-clear-filters" class="nav-btn nav-btn-light" type="button">Limpiar red</button>
               <div id="network-kpis" class="network-kpis"></div>
             </div>
             <div id="network-graph" class="network-graph"></div>

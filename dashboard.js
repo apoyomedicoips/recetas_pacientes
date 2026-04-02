@@ -15,13 +15,17 @@ const state = {
   overview: null,
   patientsData: null,
   doctorsData: null,
-  networkData: null,
+  networkIndex: null,
+  networkMonthCache: {},
   currentView: "overview",
   patientSearch: "",
   doctorSearch: "",
   selectedPatientId: "",
   selectedDoctorId: "",
   selectedNetworkMonth: "",
+  networkDoctorFilter: "",
+  networkPatientFilter: "",
+  networkProductFilter: "",
   selectedNetworkNode: null,
 };
 
@@ -127,8 +131,17 @@ async function loadDoctorsData() {
   if (!state.doctorsData) state.doctorsData = await fetchJson("medicos_data.json");
 }
 
-async function loadNetworkData() {
-  if (!state.networkData) state.networkData = await fetchJson("network_data.json");
+async function loadNetworkIndex() {
+  if (!state.networkIndex) state.networkIndex = await fetchJson("network_index.json");
+}
+
+async function loadNetworkMonth(month) {
+  const entry = (state.networkIndex?.months || []).find((item) => item.mes === month);
+  if (!entry) return null;
+  if (!state.networkMonthCache[month]) {
+    state.networkMonthCache[month] = await fetchJson(entry.file);
+  }
+  return state.networkMonthCache[month];
 }
 
 function findById(rows, key, id) {
@@ -356,16 +369,17 @@ function renderDoctorsView() {
   renderTableBody("doctors-history", history, "doctor");
 }
 
-function currentNetworkSnapshot() {
-  const snapshots = state.networkData?.snapshots || [];
-  if (!snapshots.length) return null;
-  return snapshots.find((item) => item.mes === state.selectedNetworkMonth) || snapshots[0];
-}
-
 function nodeColor(type) {
   if (type === "medico") return "#1f5d96";
   if (type === "paciente") return "#0f766e";
   return "#d97706";
+}
+
+function nodeTint(type, ratio) {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  if (type === "medico") return `rgba(31, 93, 150, ${0.25 + clamped * 0.75})`;
+  if (type === "paciente") return `rgba(15, 118, 110, ${0.25 + clamped * 0.75})`;
+  return `rgba(217, 119, 6, ${0.25 + clamped * 0.75})`;
 }
 
 function getNodeLabel(snapshot, type, id) {
@@ -383,12 +397,77 @@ function renderNetworkKpis(snapshot) {
   `;
 }
 
-function ensureNetworkSelection(snapshot) {
-  const allNodes = [
-    ...rowsToObjects(snapshot.nodes.medicos).map((item) => ({ type: "medico", id: item.id })),
-    ...rowsToObjects(snapshot.nodes.pacientes).map((item) => ({ type: "paciente", id: item.id })),
-    ...rowsToObjects(snapshot.nodes.productos).map((item) => ({ type: "producto", id: item.id })),
-  ];
+function filteredNodeIds(nodes, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return null;
+  const matches = nodes.filter((node) => textIncludes(node.id, q) || textIncludes(node.label, q)).map((node) => String(node.id));
+  return new Set(matches);
+}
+
+function buildFilteredNetwork(snapshot) {
+  const doctorNodes = rowsToObjects(snapshot.nodes.medicos).map((item) => ({ ...item, type: "medico" }));
+  const patientNodes = rowsToObjects(snapshot.nodes.pacientes).map((item) => ({ ...item, type: "paciente" }));
+  const productNodes = rowsToObjects(snapshot.nodes.productos).map((item) => ({ ...item, type: "producto" }));
+
+  const doctorFilter = filteredNodeIds(doctorNodes, state.networkDoctorFilter);
+  const patientFilter = filteredNodeIds(patientNodes, state.networkPatientFilter);
+  const productFilter = filteredNodeIds(productNodes, state.networkProductFilter);
+
+  let mp = rowsToObjects(snapshot.edges.medico_paciente).map((edge) => ({ ...edge, edgeType: "medico_paciente" }));
+  let pp = rowsToObjects(snapshot.edges.paciente_producto).map((edge) => ({ ...edge, edgeType: "paciente_producto" }));
+  let md = rowsToObjects(snapshot.edges.medico_producto).map((edge) => ({ ...edge, edgeType: "medico_producto" }));
+
+  if (doctorFilter) {
+    mp = mp.filter((edge) => doctorFilter.has(String(edge.source)));
+    md = md.filter((edge) => doctorFilter.has(String(edge.source)));
+  }
+  if (patientFilter) {
+    mp = mp.filter((edge) => patientFilter.has(String(edge.target)));
+    pp = pp.filter((edge) => patientFilter.has(String(edge.source)));
+  }
+  if (productFilter) {
+    pp = pp.filter((edge) => productFilter.has(String(edge.target)));
+    md = md.filter((edge) => productFilter.has(String(edge.target)));
+  }
+
+  if (doctorFilter && patientFilter && !productFilter) {
+    pp = pp.filter((edge) => patientFilter.has(String(edge.source)));
+  }
+  if (patientFilter && productFilter && !doctorFilter) {
+    mp = mp.filter((edge) => patientFilter.has(String(edge.target)));
+  }
+  if (doctorFilter && productFilter && !patientFilter) {
+    const doctorsSeen = new Set(md.map((edge) => String(edge.source)));
+    const productsSeen = new Set(md.map((edge) => String(edge.target)));
+    mp = mp.filter((edge) => doctorsSeen.has(String(edge.source)));
+    pp = pp.filter((edge) => productsSeen.has(String(edge.target)));
+  }
+
+  const usedDoctors = new Set([...mp.map((edge) => String(edge.source)), ...md.map((edge) => String(edge.source))]);
+  const usedPatients = new Set([...mp.map((edge) => String(edge.target)), ...pp.map((edge) => String(edge.source))]);
+  const usedProducts = new Set([...pp.map((edge) => String(edge.target)), ...md.map((edge) => String(edge.target))]);
+
+  let doctors = doctorNodes.filter((node) => usedDoctors.has(String(node.id)));
+  let patients = patientNodes.filter((node) => usedPatients.has(String(node.id)));
+  let products = productNodes.filter((node) => usedProducts.has(String(node.id)));
+
+  const noFilters = !doctorFilter && !patientFilter && !productFilter;
+  if (noFilters) {
+    doctors = doctors.slice(0, 14);
+    patients = patients.slice(0, 24);
+    products = products.slice(0, 16);
+    const doctorIds = new Set(doctors.map((node) => String(node.id)));
+    const patientIds = new Set(patients.map((node) => String(node.id)));
+    const productIds = new Set(products.map((node) => String(node.id)));
+    mp = mp.filter((edge) => doctorIds.has(String(edge.source)) && patientIds.has(String(edge.target)));
+    pp = pp.filter((edge) => patientIds.has(String(edge.source)) && productIds.has(String(edge.target)));
+    md = md.filter((edge) => doctorIds.has(String(edge.source)) && productIds.has(String(edge.target)));
+  }
+
+  return { doctors, patients, products, mp, pp, md };
+}
+
+function ensureNetworkSelection(allNodes) {
   const stillExists = allNodes.some((item) =>
     state.selectedNetworkNode &&
     item.type === state.selectedNetworkNode.type &&
@@ -397,14 +476,15 @@ function ensureNetworkSelection(snapshot) {
   if (!stillExists) state.selectedNetworkNode = allNodes[0] || null;
 }
 
-function renderNetworkGraph(snapshot) {
-  const doctors = rowsToObjects(snapshot.nodes.medicos).map((item) => ({ ...item, type: "medico" }));
-  const patients = rowsToObjects(snapshot.nodes.pacientes).map((item) => ({ ...item, type: "paciente" }));
-  const products = rowsToObjects(snapshot.nodes.productos).map((item) => ({ ...item, type: "producto" }));
-  const edgeMP = rowsToObjects(snapshot.edges.medico_paciente).map((item) => ({ ...item, type: "medico_paciente" }));
-  const edgePP = rowsToObjects(snapshot.edges.paciente_producto).map((item) => ({ ...item, type: "paciente_producto" }));
+function renderNetworkGraph(snapshot, filtered) {
+  const doctors = filtered.doctors;
+  const patients = filtered.patients;
+  const products = filtered.products;
+  const edgeMP = filtered.mp;
+  const edgePP = filtered.pp;
+  const edgeMD = filtered.md;
 
-  ensureNetworkSelection(snapshot);
+  ensureNetworkSelection([...doctors, ...patients, ...products]);
   const selected = state.selectedNetworkNode;
 
   const W = 1240;
@@ -426,6 +506,7 @@ function renderNetworkGraph(snapshot) {
   const allEdges = [
     ...edgeMP.map((edge) => ({ ...edge, sourceType: "medico", targetType: "paciente" })),
     ...edgePP.map((edge) => ({ ...edge, sourceType: "paciente", targetType: "producto" })),
+    ...edgeMD.map((edge) => ({ ...edge, sourceType: "medico", targetType: "producto", arc: true })),
   ];
   const maxRecipes = Math.max(...allEdges.map((edge) => Number(edge.recetas || 0)), 1);
   const selectedKey = selected ? `${selected.type}:${selected.id}` : "";
@@ -436,7 +517,12 @@ function renderNetworkGraph(snapshot) {
     if (!from || !to) return "";
     const active = !selectedKey || selectedKey === `${edge.sourceType}:${edge.source}` || selectedKey === `${edge.targetType}:${edge.target}`;
     const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * 6;
-    return `<line x1="${from.x + 70}" y1="${from.y}" x2="${to.x - 70}" y2="${to.y}" stroke="${active ? "#8fb4da" : "#d7e3ef"}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" opacity="${active ? 0.92 : 0.35}"></line>`;
+    if (edge.arc) {
+      const cx = (from.x + to.x) / 2;
+      const cy = Math.min(from.y, to.y) - 40;
+      return `<path d="M ${from.x + 50} ${from.y} Q ${cx} ${cy} ${to.x - 50} ${to.y}" stroke="${active ? "#c0b2db" : "#e2d9ef"}" stroke-width="${Math.max(1, width - 1).toFixed(2)}" fill="none" opacity="${active ? 0.85 : 0.22}"></path>`;
+    }
+    return `<line x1="${from.x + 50}" y1="${from.y}" x2="${to.x - 50}" y2="${to.y}" stroke="${active ? "#8fb4da" : "#d7e3ef"}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" opacity="${active ? 0.92 : 0.28}"></line>`;
   }).join("");
 
   const headings = [
@@ -446,17 +532,19 @@ function renderNetworkGraph(snapshot) {
   ].map((item) => `<text x="${item.x}" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#102235">${item.label}</text>`).join("");
 
   const svgNodes = [...doctorPos, ...patientPos, ...productPos].map((node) => {
+    const maxByType = Math.max(...(node.type === "medico" ? doctors : node.type === "paciente" ? patients : products).map((item) => Number(item.recetas || 0)), 1);
+    const ratio = Number(node.recetas || 0) / maxByType;
     const color = nodeColor(node.type);
     const active = selectedKey === `${node.type}:${node.id}`;
-    const fill = active ? color : "#ffffff";
+    const fill = active ? color : nodeTint(node.type, ratio);
     const textFill = active ? "#ffffff" : "#102235";
-    const border = active ? color : "#c7d7e7";
-    const label = String(node.label).length > 26 ? `${String(node.label).slice(0, 26)}...` : String(node.label);
+    const border = active ? color : "rgba(16,34,53,0.12)";
+    const radius = 13 + ratio * 18;
     return `
       <g class="network-node" data-node-type="${node.type}" data-node-id="${esc(node.id)}" style="cursor:pointer">
-        <rect x="${node.x - 70}" y="${node.y - 18}" width="140" height="36" rx="12" fill="${fill}" stroke="${border}" stroke-width="${active ? 2.2 : 1.2}"></rect>
-        <text x="${node.x}" y="${node.y - 1}" text-anchor="middle" font-size="12" font-weight="700" fill="${textFill}">${esc(label)}</text>
-        <text x="${node.x}" y="${node.y + 13}" text-anchor="middle" font-size="10" fill="${active ? "#dbeafe" : "#6b7f94"}">${fmtInt(node.recetas)} recetas</text>
+        <circle cx="${node.x}" cy="${node.y}" r="${radius.toFixed(1)}" fill="${fill}" stroke="${border}" stroke-width="${active ? 2.5 : 1.1}"></circle>
+        <title>${esc(node.label)} (${fmtInt(node.recetas)} recetas)</title>
+        <text x="${node.x}" y="${node.y + 4}" text-anchor="middle" font-size="10" font-weight="700" fill="${textFill}">${esc(String(node.type).charAt(0).toUpperCase())}</text>
       </g>
     `;
   }).join("");
@@ -508,13 +596,13 @@ function renderNetworkFocus(snapshot) {
   `;
 }
 
-function renderNetworkLinks(snapshot) {
+function renderNetworkLinks(snapshot, filtered) {
   const body = $("network-links-body");
   const selected = state.selectedNetworkNode;
   const edges = [
-    ...rowsToObjects(snapshot.edges.medico_paciente).map((item) => ({ ...item, edgeType: "Medico -> Paciente", sourceType: "medico", targetType: "paciente" })),
-    ...rowsToObjects(snapshot.edges.paciente_producto).map((item) => ({ ...item, edgeType: "Paciente -> Producto", sourceType: "paciente", targetType: "producto" })),
-    ...rowsToObjects(snapshot.edges.medico_producto).map((item) => ({ ...item, edgeType: "Medico -> Producto", sourceType: "medico", targetType: "producto" })),
+    ...filtered.mp.map((item) => ({ ...item, edgeType: "Medico -> Paciente", sourceType: "medico", targetType: "paciente" })),
+    ...filtered.pp.map((item) => ({ ...item, edgeType: "Paciente -> Producto", sourceType: "paciente", targetType: "producto" })),
+    ...filtered.md.map((item) => ({ ...item, edgeType: "Medico -> Producto", sourceType: "medico", targetType: "producto" })),
   ].filter((edge) => {
     if (!selected) return true;
     return String(edge.source) === String(selected.id) || String(edge.target) === String(selected.id);
@@ -536,21 +624,32 @@ function renderNetworkLinks(snapshot) {
 }
 
 function renderNetworkMonthOptions() {
-  const months = state.networkData?.months || [];
-  $("network-month").innerHTML = months.map((month) => `<option value="${esc(month)}">${esc(month)}</option>`).join("");
-  if (!state.selectedNetworkMonth && months.length) state.selectedNetworkMonth = months[0];
+  const months = state.networkIndex?.months || [];
+  $("network-month").innerHTML = months.map((item) => `<option value="${esc(item.mes)}">${esc(item.mes)}</option>`).join("");
+  if (!state.selectedNetworkMonth && months.length) state.selectedNetworkMonth = months[0].mes;
   $("network-month").value = state.selectedNetworkMonth;
 }
 
-function renderNetworkView() {
-  const snapshot = currentNetworkSnapshot();
+function populateNetworkDatalists(snapshot) {
+  const fill = (id, rows) => {
+    $(id).innerHTML = rows.slice(0, 400).map((row) => `<option value="${esc(row.id)}">${esc(row.label)}</option>`).join("");
+  };
+  fill("network-doctors-list", rowsToObjects(snapshot.nodes.medicos));
+  fill("network-patients-list", rowsToObjects(snapshot.nodes.pacientes));
+  fill("network-products-list", rowsToObjects(snapshot.nodes.productos));
+}
+
+async function renderNetworkView() {
+  const snapshot = await loadNetworkMonth(state.selectedNetworkMonth);
   if (!snapshot) return;
-  $("network-meta").textContent = `Mes ${snapshot.mes} · top relaciones del periodo`;
+  const filtered = buildFilteredNetwork(snapshot);
+  $("network-meta").textContent = `Mes ${snapshot.mes} · red filtrada`;
   renderNetworkMonthOptions();
+  populateNetworkDatalists(snapshot);
   renderNetworkKpis(snapshot);
-  renderNetworkGraph(snapshot);
+  renderNetworkGraph(snapshot, filtered);
   renderNetworkFocus(snapshot);
-  renderNetworkLinks(snapshot);
+  renderNetworkLinks(snapshot, filtered);
 }
 
 async function openPatientsView() {
@@ -567,8 +666,9 @@ async function openDoctorsView() {
 
 async function openNetworkView() {
   setActiveView("network");
-  await loadNetworkData();
-  renderNetworkView();
+  await loadNetworkIndex();
+  renderNetworkMonthOptions();
+  await renderNetworkView();
 }
 
 function bindEvents() {
@@ -598,6 +698,35 @@ function bindEvents() {
   $("network-month").addEventListener("change", () => {
     state.selectedNetworkMonth = $("network-month").value;
     state.selectedNetworkNode = null;
+    renderNetworkView();
+  });
+
+  $("network-doctor-filter").addEventListener("input", () => {
+    state.networkDoctorFilter = $("network-doctor-filter").value.trim();
+    state.selectedNetworkNode = null;
+    renderNetworkView();
+  });
+
+  $("network-patient-filter").addEventListener("input", () => {
+    state.networkPatientFilter = $("network-patient-filter").value.trim();
+    state.selectedNetworkNode = null;
+    renderNetworkView();
+  });
+
+  $("network-product-filter").addEventListener("input", () => {
+    state.networkProductFilter = $("network-product-filter").value.trim();
+    state.selectedNetworkNode = null;
+    renderNetworkView();
+  });
+
+  $("network-clear-filters").addEventListener("click", () => {
+    state.networkDoctorFilter = "";
+    state.networkPatientFilter = "";
+    state.networkProductFilter = "";
+    state.selectedNetworkNode = null;
+    $("network-doctor-filter").value = "";
+    $("network-patient-filter").value = "";
+    $("network-product-filter").value = "";
     renderNetworkView();
   });
 }
