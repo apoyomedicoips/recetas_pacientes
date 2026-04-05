@@ -216,10 +216,11 @@
               <span id="network-meta" class="mini-meta">Cargando...</span>
             </div>
             <div class="network-toolbar">
-              <label class="control inline-control">
-                <span>Mes</span>
-                <select id="network-month"></select>
-              </label>
+              <div class="network-scrubber-wrap">
+                <button id="network-play-btn" class="play-btn" title="Reproducir cronología completa">▶</button>
+                <div id="network-scrubber-bars" class="scrubber-bars"></div>
+                <select id="network-month" style="display:none;"></select>
+              </div>
               <label class="control inline-control">
                 <span>Filtrar médico</span>
                 <input id="network-doctor-filter" list="network-doctors-list" type="text" placeholder="Codigo o nombre">
