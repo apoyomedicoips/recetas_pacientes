@@ -1113,6 +1113,7 @@ async function renderTimelineNetworkGraph(snapshots) {
   // Counterparts for Product: Patients (sources), Doctors (sources)
   
   const historyEdges = [];
+  const crossEdges = []; // Extra edges not touching the focal node directly
   const counterparts = new Map(); // id -> { type, label, totalRecetas }
   
   snapshots.forEach((snap, mIndex) => {
@@ -1124,12 +1125,15 @@ async function renderTimelineNetworkGraph(snapshots) {
     if (focalType === "paciente") {
       edgesFound.push(...mp.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "medico", targetId: focalNode.id, targetType: "paciente" })));
       edgesFound.push(...pp.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "paciente", targetId: String(e.target), targetType: "producto" })));
+      crossEdges.push(...md.map(e => ({ mIndex, sourceId: String(e.source), targetId: String(e.target), recetas: Number(e.recetas||0) })));
     } else if (focalType === "medico") {
       edgesFound.push(...mp.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "medico", targetId: String(e.target), targetType: "paciente" })));
       edgesFound.push(...md.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "medico", targetId: String(e.target), targetType: "producto" })));
+      crossEdges.push(...pp.map(e => ({ mIndex, sourceId: String(e.source), targetId: String(e.target), recetas: Number(e.recetas||0) })));
     } else if (focalType === "producto") {
       edgesFound.push(...pp.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "paciente", targetId: focalNode.id, targetType: "producto" })));
       edgesFound.push(...md.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "medico", targetId: focalNode.id, targetType: "producto" })));
+      crossEdges.push(...mp.map(e => ({ mIndex, sourceId: String(e.source), targetId: String(e.target), recetas: Number(e.recetas||0) })));
     }
 
     edgesFound.forEach(e => {
@@ -1202,7 +1206,10 @@ async function renderTimelineNetworkGraph(snapshots) {
     (e.targetId === focalNode.id && validCounterpartIds.has(e.sourceId))
   );
 
+  const renderedCrossEdges = crossEdges.filter(e => validCounterpartIds.has(e.sourceId) && validCounterpartIds.has(e.targetId));
+
   const maxRecetas = Math.max(...renderedEdges.map(e => e.recetas), 1);
+  const maxCross = Math.max(...renderedCrossEdges.map(e => e.recetas), 1);
 
   // Render SVG X-axis columns
   const svgCols = snapshots.map((snap, i) => {
@@ -1238,6 +1245,22 @@ async function renderTimelineNetworkGraph(snapshots) {
       svgNodes += `<circle cx="${x}" cy="${focalY}" r="6" fill="${nodeColor(focalType)}" stroke="#fff" stroke-width="2" />`;
     }
 
+    // Dibujar enlaces cruzados saltando el nodo focal con curvas suaves atenuadas
+    const thisMonthCross = renderedCrossEdges.filter(e => e.mIndex === mIndex);
+    thisMonthCross.forEach(e => {
+      const laneA = laneAssignments.get(e.sourceId);
+      const laneB = laneAssignments.get(e.targetId);
+      if (!laneA || !laneB) return;
+      
+      const y1 = laneA.y;
+      const y2 = laneB.y;
+      const cy1 = y1 + (y2 - y1) * 0.25;
+      const cy2 = y1 + (y2 - y1) * 0.75;
+      const width = 1 + (e.recetas / maxCross) * 8; // Mapeado de grosor acotado
+      
+      svgEdges += `<path d="M ${x} ${y1} C ${x + 35} ${cy1}, ${x + 35} ${cy2}, ${x} ${y2}" stroke="#8b5cf6" stroke-width="${width.toFixed(1)}" fill="none" opacity="0.25" stroke-linecap="round"></path>`;
+    });
+
     monthEdges.forEach(e => {
       const counterpartId = e.sourceId === focalNode.id ? e.targetId : e.sourceId;
       const counterpartLane = laneAssignments.get(counterpartId);
@@ -1246,9 +1269,8 @@ async function renderTimelineNetworkGraph(snapshots) {
       const width = 1 + (e.recetas / maxRecetas) * 12;
       svgNodes += `<circle cx="${x}" cy="${counterpartLane.y}" r="5" fill="${nodeColor(counterpartLane.type)}" />`;
       
-      // Arc / Edge
-      // Si estuviéramos conectando de source a target, pero acá todo viaja del/al focal, los conectamos verticalmente.
-      svgEdges += `<path d="M ${x} ${focalY} L ${x} ${counterpartLane.y}" stroke="${nodeColor(counterpartLane.type)}" stroke-width="${width.toFixed(1)}" stroke-linecap="round" fill="none" opacity="0.6"></path>`;
+      // Arc / Edge Vertical principal
+      svgEdges += `<path d="M ${x} ${focalY} L ${x} ${counterpartLane.y}" stroke="${nodeColor(counterpartLane.type)}" stroke-width="${width.toFixed(1)}" stroke-linecap="round" fill="none" opacity="0.65"></path>`;
     });
   });
 
