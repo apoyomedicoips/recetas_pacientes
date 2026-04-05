@@ -1069,77 +1069,206 @@ function renderNetworkAlerts(snapshot, filtered) {
     : `<article class="alert-card info"><strong>Sin alertas</strong><p>No hay suficiente densidad en la subred visible para construir señales gerenciales.</p></article>`;
 }
 
-function renderNetworkScrubber() {
-  const months = state.networkIndex?.months || [];
-  if (!state.selectedNetworkMonth && months.length) state.selectedNetworkMonth = months[0].mes;
-  
-  $("network-month").innerHTML = months.map((item) => `<option value="${esc(item.mes)}">${esc(item.mes)}</option>`).join("");
-  $("network-month").value = state.selectedNetworkMonth;
+async function renderTimelineNetworkGraph(snapshots) {
+  const container = $("network-graph");
+  const doctorFilter = state.networkDoctorFilter?.trim().toLowerCase();
+  const patientFilter = state.networkPatientFilter?.trim().toLowerCase();
+  const productFilter = state.networkProductFilter?.trim().toLowerCase();
 
-  const maxRecetas = Math.max(...months.map(m => m.total_recetas), 1);
-  const container = $("network-scrubber-bars");
-  if (!container) return;
-  const chronologicalMonths = [...months].reverse();
+  if (!doctorFilter && !patientFilter && !productFilter) {
+    container.innerHTML = `<div class="empty-state" style="padding:40px;text-align:center">En esta vista horizontal (evolución temporal completa), debe filtrar por algún Paciente, Médico o Producto para visualizar su evolución cruzando todos los meses del historial.</div>`;
+    $("network-meta").textContent = "Todos los meses · Sin filtro";
+    $("network-kpis").innerHTML = "";
+    return;
+  }
+
+  // 1. Gather all events for the target
+  // We need to resolve what the "Focal Entity" is.
+  let focalType = patientFilter ? "paciente" : doctorFilter ? "medico" : "producto";
+  let focalQuery = patientFilter || doctorFilter || productFilter;
+  let focalNode = null;
+
+  // Let's find the best matching focal node across all snapshots
+  for (const snap of snapshots) {
+    const list = focalType === "paciente" ? snap.nodes.pacientes : focalType === "medico" ? snap.nodes.medicos : snap.nodes.productos;
+    const items = rowsToObjects(list);
+    const match = items.find(n => textIncludes(n.id, focalQuery) || textIncludes(n.label, focalQuery));
+    if (match) {
+      focalNode = { ...match, type: focalType, id: String(match.id), label: match.label || match.id };
+      break;
+    }
+  }
+
+  if (!focalNode) {
+    container.innerHTML = `<div class="empty-state" style="padding:40px">Entidad no encontrada en el caché.</div>`;
+    return;
+  }
+
+  $("network-meta").textContent = `Evolución de ${focalType === "paciente" ? "Paciente" : focalType === "medico" ? "Médico" : "Producto"} · ${focalNode.label}`;
   
-  container.innerHTML = chronologicalMonths.map(mon => {
-    const heightPct = Math.max(10, (mon.total_recetas / maxRecetas) * 100);
-    const activeClass = mon.mes === state.selectedNetworkMonth ? "active" : "";
+  // 2. Build history for the focal node across all months
+  // We need its counterparts. 
+  // Counterparts for Patient: Doctors (sources), Products (targets)
+  // Counterparts for Doctor: Patients (targets), Products (targets)
+  // Counterparts for Product: Patients (sources), Doctors (sources)
+  
+  const historyEdges = [];
+  const counterparts = new Map(); // id -> { type, label, totalRecetas }
+  
+  snapshots.forEach((snap, mIndex) => {
+    let edgesFound = [];
+    const mp = rowsToObjects(snap.edges.medico_paciente);
+    const pp = rowsToObjects(snap.edges.paciente_producto);
+    const md = rowsToObjects(snap.edges.medico_producto);
+    
+    if (focalType === "paciente") {
+      edgesFound.push(...mp.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "medico", targetId: focalNode.id, targetType: "paciente" })));
+      edgesFound.push(...pp.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "paciente", targetId: String(e.target), targetType: "producto" })));
+    } else if (focalType === "medico") {
+      edgesFound.push(...mp.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "medico", targetId: String(e.target), targetType: "paciente" })));
+      edgesFound.push(...md.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "medico", targetId: String(e.target), targetType: "producto" })));
+    } else if (focalType === "producto") {
+      edgesFound.push(...pp.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "paciente", targetId: focalNode.id, targetType: "producto" })));
+      edgesFound.push(...md.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "medico", targetId: focalNode.id, targetType: "producto" })));
+    }
+
+    edgesFound.forEach(e => {
+      historyEdges.push(e);
+      let counterpartId, counterpartType;
+      if (e.sourceId === focalNode.id) {
+        counterpartId = e.targetId;
+        counterpartType = e.targetType;
+      } else {
+        counterpartId = e.sourceId;
+        counterpartType = e.sourceType;
+      }
+      const key = `${counterpartType}:${counterpartId}`;
+      if (!counterparts.has(key)) counterparts.set(key, { id: counterpartId, type: counterpartType, label: "", totalRecetas: 0 });
+      counterparts.get(key).totalRecetas += e.recetas;
+    });
+  });
+
+  // Fetch labels for counterparts
+  counterparts.forEach((val, key) => {
+    // try to find label in last snapshot
+    for (let i = snapshots.length - 1; i >= 0; i--) {
+      const snap = snapshots[i];
+      const list = val.type === "medico" ? snap.nodes.medicos : val.type === "paciente" ? snap.nodes.pacientes : snap.nodes.productos;
+      const match = rowsToObjects(list).find(n => String(n.id) === val.id);
+      if (match) {
+        val.label = match.label || val.id;
+        break;
+      }
+    }
+  });
+
+  // Limit counterparts (Top 8 for cleanly displaying lanes)
+  const topCounterparts = Array.from(counterparts.values())
+    .sort((a,b) => b.totalRecetas - a.totalRecetas)
+    .slice(0, 14); // up to 14 lanes total
+
+  const laneAssignments = new Map(); // id -> {y, type}
+  
+  // Distribute lanes vertically
+  // Doctors above, Focal in middle, Products below (or Patients above Focal, Products below Focal)
+  const H_PER_LANE = 40;
+  let currentY = 80;
+  
+  const groupsToTop = topCounterparts.filter(c => c.type === "medico" || (focalType==="producto" && c.type==="paciente"));
+  const groupsToBottom = topCounterparts.filter(c => c.type === "producto" || (focalType==="medico" && c.type==="paciente"));
+  
+  groupsToTop.forEach(c => {
+    laneAssignments.set(c.id, { y: currentY, type: c.type, label: c.label });
+    currentY += H_PER_LANE;
+  });
+  
+  currentY += 20; // Gap
+  const focalY = currentY;
+  laneAssignments.set(focalNode.id, { y: focalY, type: focalType, label: focalNode.label, isFocal: true });
+  currentY += H_PER_LANE + 20;
+
+  groupsToBottom.forEach(c => {
+    laneAssignments.set(c.id, { y: currentY, type: c.type, label: c.label });
+    currentY += H_PER_LANE;
+  });
+  
+  const H = Math.max(300, currentY + 60);
+  const W = Math.max(1000, 200 + snapshots.length * 90);
+
+  // Filter edges to only those connecting in topCounterparts
+  const validCounterpartIds = new Set(topCounterparts.map(c => c.id));
+  const renderedEdges = historyEdges.filter(e => 
+    (e.sourceId === focalNode.id && validCounterpartIds.has(e.targetId)) ||
+    (e.targetId === focalNode.id && validCounterpartIds.has(e.sourceId))
+  );
+
+  const maxRecetas = Math.max(...renderedEdges.map(e => e.recetas), 1);
+
+  // Render SVG X-axis columns
+  const svgCols = snapshots.map((snap, i) => {
+    const x = 200 + i * 90;
     return `
-      <div class="scrubber-bar-container ${activeClass}" data-month="${esc(mon.mes)}">
-        <div class="scrubber-bar" style="height: ${heightPct}%"></div>
-        <div class="scrubber-tooltip">${esc(mon.mes)}<br>${fmtInt(mon.total_recetas)} recetas</div>
-      </div>
+      <text x="${x}" y="30" text-anchor="middle" font-size="12" font-weight="700" fill="#102235">${esc(snap.mes)}</text>
+      <line x1="${x}" x2="${x}" y1="40" y2="${H - 20}" stroke="rgba(16,34,53,0.06)" stroke-dasharray="4 4" />
     `;
   }).join("");
 
-  container.querySelectorAll(".scrubber-bar-container").forEach(el => {
-    el.addEventListener("click", () => {
-      state.selectedNetworkMonth = el.dataset.month;
-      state.networkDoctorFilter = "";
-      state.networkPatientFilter = "";
-      state.networkProductFilter = "";
-      state.selectedNetworkNode = null;
-      $("network-doctor-filter").value = "";
-      $("network-patient-filter").value = "";
-      $("network-product-filter").value = "";
-      renderNetworkView();
+  // Render horizontal lanes
+  const svgLanes = Array.from(laneAssignments.values()).map(lane => {
+    const color = nodeColor(lane.type);
+    const weight = lane.isFocal ? "700" : "600";
+    const bg = lane.isFocal ? "rgba(0,0,0,0.04)" : "transparent";
+    return `
+      <rect x="0" y="${lane.y - 15}" width="${W}" height="30" fill="${bg}" />
+      <text x="180" y="${lane.y + 4}" text-anchor="end" font-size="12" font-weight="${weight}" fill="${color}">${esc(shortNodeLabel(lane.label, 26))}</text>
+      <line x1="190" x2="${W - 20}" y1="${lane.y}" y2="${lane.y}" stroke="${color}" stroke-opacity="0.2" stroke-width="2" stroke-linecap="round" />
+    `;
+  }).join("");
+
+  // Render horizontal nodes and vertical connect edges
+  let svgEdges = "";
+  let svgNodes = "";
+
+  snapshots.forEach((snap, mIndex) => {
+    const x = 200 + mIndex * 90;
+    const monthEdges = renderedEdges.filter(e => e.mIndex === mIndex);
+    
+    // focal node activity?
+    if (monthEdges.length > 0) {
+      svgNodes += `<circle cx="${x}" cy="${focalY}" r="6" fill="${nodeColor(focalType)}" stroke="#fff" stroke-width="2" />`;
+    }
+
+    monthEdges.forEach(e => {
+      const counterpartId = e.sourceId === focalNode.id ? e.targetId : e.sourceId;
+      const counterpartLane = laneAssignments.get(counterpartId);
+      if (!counterpartLane) return;
+      
+      const width = 1 + (e.recetas / maxRecetas) * 12;
+      svgNodes += `<circle cx="${x}" cy="${counterpartLane.y}" r="5" fill="${nodeColor(counterpartLane.type)}" />`;
+      
+      // Arc / Edge
+      // Si estuviéramos conectando de source a target, pero acá todo viaja del/al focal, los conectamos verticalmente.
+      svgEdges += `<path d="M ${x} ${focalY} L ${x} ${counterpartLane.y}" stroke="${nodeColor(counterpartLane.type)}" stroke-width="${width.toFixed(1)}" stroke-linecap="round" fill="none" opacity="0.6"></path>`;
     });
   });
-}
 
-function toggleNetworkPlay() {
-  const btn = $("network-play-btn");
-  if (!btn) return;
-  if (state.networkPlaying) {
-    state.networkPlaying = false;
-    btn.innerHTML = "▶";
-    btn.classList.remove("playing");
-    clearInterval(state.networkPlayTimer);
-  } else {
-    state.networkPlaying = true;
-    btn.innerHTML = "⏸";
-    btn.classList.add("playing");
-    state.networkPlayTimer = setInterval(advanceNetworkMonth, 2200);
-  }
-}
+  // Remove the previous timeline/tools layout from index if present, we just inject
+  container.innerHTML = `
+    <div style="overflow-x:auto">
+      <svg viewBox="0 0 ${W} ${H}" style="min-width:${W}px;display:block" xmlns="http://www.w3.org/2000/svg">
+        ${svgLanes}
+        ${svgCols}
+        ${svgEdges}
+        ${svgNodes}
+      </svg>
+    </div>
+  `;
 
-function advanceNetworkMonth() {
-  const months = state.networkIndex?.months || [];
-  if (!months.length) return;
-  const reverseMonths = [...months].reverse();
-  const currentIndex = reverseMonths.findIndex(m => m.mes === state.selectedNetworkMonth);
-  const nextIndex = (currentIndex + 1) % reverseMonths.length;
-  
-  state.selectedNetworkMonth = reverseMonths[nextIndex].mes;
-  state.networkDoctorFilter = "";
-  state.networkPatientFilter = "";
-  state.networkProductFilter = "";
-  state.selectedNetworkNode = null;
-  $("network-doctor-filter").value = "";
-  $("network-patient-filter").value = "";
-  $("network-product-filter").value = "";
-  
-  renderNetworkView();
+  // Draw KPIs globally for the filtered timeframe
+  const globalRecetas = historyEdges.reduce((acc, e) => acc + e.recetas, 0);
+  $("network-kpis").innerHTML = `
+    <span class="network-pill">Total histórico cruzando filtro: <strong>${fmtInt(globalRecetas)}</strong> recetas</span>
+  `;
 }
 
 function populateNetworkDatalists(snapshot) {
@@ -1152,31 +1281,22 @@ function populateNetworkDatalists(snapshot) {
 }
 
 async function renderNetworkView() {
-  const snapshot = await loadNetworkMonth(state.selectedNetworkMonth);
-  if (!snapshot) return;
-
   const months = state.networkIndex?.months || [];
-  const currentIndex = months.findIndex((item) => item.mes === state.selectedNetworkMonth);
-  let previousSnapshot = null;
-  if (currentIndex >= 0 && currentIndex < months.length - 1) {
-    previousSnapshot = await loadNetworkMonth(months[currentIndex + 1].mes);
-  }
-
-  ensureDefaultNetworkPatient(snapshot);
-  const filtered = buildFilteredNetwork(snapshot);
-  const patientLabel = filtered.focalPatient ? (filtered.focalPatient.label || filtered.focalPatient.id) : "sin foco";
-  $("network-meta").textContent = `Mes ${snapshot.mes} · foco ${patientLabel}`;
-  renderNetworkScrubber();
-  populateNetworkDatalists(snapshot);
-  renderNetworkKpis(snapshot);
+  const chronologicalMonths = [...months].reverse();
   
-  const monthContext = await buildNetworkMonthContext(filtered);
+  $("network-meta").textContent = "Cargando serie temporal completa...";
+  // Resolving all months context to build timeline
+  const snapshots = await Promise.all(
+    chronologicalMonths.map(async m => await loadNetworkMonth(m.mes))
+  );
 
-  renderNetworkGraph(snapshot, filtered, previousSnapshot, monthContext);
-  renderNetworkTimeline(monthContext);
-  renderNetworkAlerts(snapshot, filtered);
-  renderNetworkFocus(snapshot, filtered);
-  renderNetworkLinks(snapshot, filtered);
+  populateNetworkDatalists(snapshots[snapshots.length - 1]); // the most recent for autocomplete
+  renderTimelineNetworkGraph(snapshots);
+  
+  // Vaciamos las alertas y tarjetas debajo ya que eran de 1 mes singular y node focus.
+  $("network-alerts").innerHTML = "";
+  $("network-focus").innerHTML = "";
+  $("network-links-body").innerHTML = "";
 }
 
 async function openPatientsView() {
@@ -1222,19 +1342,7 @@ function bindEvents() {
     renderDoctorsView();
   });
 
-  $("network-play-btn")?.addEventListener("click", toggleNetworkPlay);
-
-  $("network-month").addEventListener("change", () => {
-    state.selectedNetworkMonth = $("network-month").value;
-    state.networkDoctorFilter = "";
-    state.networkPatientFilter = "";
-    state.networkProductFilter = "";
-    state.selectedNetworkNode = null;
-    $("network-doctor-filter").value = "";
-    $("network-patient-filter").value = "";
-    $("network-product-filter").value = "";
-    renderNetworkView();
-  });
+  // No network-play-btn nor network-month anymore
 
   $("network-doctor-filter").addEventListener("input", () => {
     state.networkDoctorFilter = $("network-doctor-filter").value.trim();
