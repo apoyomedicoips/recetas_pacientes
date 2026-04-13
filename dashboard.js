@@ -17,6 +17,8 @@ const state = {
   doctorsData: null,
   networkIndex: null,
   networkMonthCache: {},
+  networkSnapshotsRecent: null,
+  networkAllLoadPromise: null,
   networkSnapshotsAll: null,
   networkDatalistsReady: false,
   networkRenderToken: 0,
@@ -1325,11 +1327,30 @@ async function ensureNetworkDatalists() {
 
 async function ensureAllNetworkSnapshots() {
   if (state.networkSnapshotsAll) return state.networkSnapshotsAll;
+  if (state.networkAllLoadPromise) return state.networkAllLoadPromise;
   const months = state.networkIndex?.months || [];
   const chronologicalMonths = [...months].reverse();
-  const snapshots = await Promise.all(chronologicalMonths.map((m) => loadNetworkMonth(m.mes)));
-  state.networkSnapshotsAll = snapshots.filter(Boolean);
-  return state.networkSnapshotsAll;
+  state.networkAllLoadPromise = Promise.all(chronologicalMonths.map((m) => loadNetworkMonth(m.mes)))
+    .then((snapshots) => {
+      state.networkSnapshotsAll = snapshots.filter(Boolean);
+      state.networkAllLoadPromise = null;
+      return state.networkSnapshotsAll;
+    })
+    .catch((err) => {
+      state.networkAllLoadPromise = null;
+      throw err;
+    });
+  return state.networkAllLoadPromise;
+}
+
+async function ensureRecentNetworkSnapshots(limit = 6) {
+  if (state.networkSnapshotsRecent) return state.networkSnapshotsRecent;
+  const months = state.networkIndex?.months || [];
+  const chronologicalMonths = [...months].reverse();
+  const recentMonths = chronologicalMonths.slice(-Math.max(1, limit));
+  const snapshots = await Promise.all(recentMonths.map((m) => loadNetworkMonth(m.mes)));
+  state.networkSnapshotsRecent = snapshots.filter(Boolean);
+  return state.networkSnapshotsRecent;
 }
 
 async function renderNetworkView() {
@@ -1348,10 +1369,26 @@ async function renderNetworkView() {
     return;
   }
 
-  $("network-meta").textContent = "Cargando serie temporal completa...";
-  const snapshots = await ensureAllNetworkSnapshots();
-  if (token !== state.networkRenderToken) return;
-  renderTimelineNetworkGraph(snapshots);
+  if (!state.networkSnapshotsAll) {
+    $("network-meta").textContent = "Carga rapida: ultimos meses...";
+    const recentSnapshots = await ensureRecentNetworkSnapshots(6);
+    if (token !== state.networkRenderToken) return;
+    if (recentSnapshots.length) renderTimelineNetworkGraph(recentSnapshots);
+
+    $("network-meta").textContent = "Completando historico completo...";
+    ensureAllNetworkSnapshots()
+      .then((allSnapshots) => {
+        if (token !== state.networkRenderToken) return;
+        renderTimelineNetworkGraph(allSnapshots);
+      })
+      .catch(() => {
+        if (token !== state.networkRenderToken) return;
+        $("network-meta").textContent = "No se pudo completar el historico completo";
+      });
+  } else {
+    $("network-meta").textContent = "Historico completo";
+    renderTimelineNetworkGraph(state.networkSnapshotsAll);
+  }
 
   $("network-alerts").innerHTML = "";
   $("network-focus").innerHTML = "";
