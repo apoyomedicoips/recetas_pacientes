@@ -17,6 +17,9 @@ const state = {
   doctorsData: null,
   networkIndex: null,
   networkMonthCache: {},
+  networkSnapshotsAll: null,
+  networkDatalistsReady: false,
+  networkRenderToken: 0,
   currentView: "overview",
   patientSearch: "",
   doctorSearch: "",
@@ -38,6 +41,14 @@ function rowsToObjects(block) {
 
 function textIncludes(value, query) {
   return String(value ?? "").toLowerCase().includes(String(query ?? "").trim().toLowerCase());
+}
+
+function debounce(fn, delay = 300) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
 }
 
 async function fetchJson(path) {
@@ -1302,20 +1313,46 @@ function populateNetworkDatalists(snapshot) {
   fill("network-products-list", rowsToObjects(snapshot.nodes.productos));
 }
 
-async function renderNetworkView() {
+async function ensureNetworkDatalists() {
+  if (state.networkDatalistsReady) return;
+  const latestMonth = state.networkIndex?.months?.[0]?.mes;
+  if (!latestMonth) return;
+  const latestSnapshot = await loadNetworkMonth(latestMonth);
+  if (!latestSnapshot) return;
+  populateNetworkDatalists(latestSnapshot);
+  state.networkDatalistsReady = true;
+}
+
+async function ensureAllNetworkSnapshots() {
+  if (state.networkSnapshotsAll) return state.networkSnapshotsAll;
   const months = state.networkIndex?.months || [];
   const chronologicalMonths = [...months].reverse();
-  
-  $("network-meta").textContent = "Cargando serie temporal completa...";
-  // Resolving all months context to build timeline
-  const snapshots = await Promise.all(
-    chronologicalMonths.map(async m => await loadNetworkMonth(m.mes))
-  );
+  const snapshots = await Promise.all(chronologicalMonths.map((m) => loadNetworkMonth(m.mes)));
+  state.networkSnapshotsAll = snapshots.filter(Boolean);
+  return state.networkSnapshotsAll;
+}
 
-  populateNetworkDatalists(snapshots[snapshots.length - 1]); // the most recent for autocomplete
+async function renderNetworkView() {
+  const token = ++state.networkRenderToken;
+  await ensureNetworkDatalists();
+  if (token !== state.networkRenderToken) return;
+
+  const hasFilters = Boolean(state.networkDoctorFilter || state.networkPatientFilter || state.networkProductFilter);
+  if (!hasFilters) {
+    $("network-meta").textContent = "Todos los meses - Sin filtro";
+    $("network-graph").innerHTML = `<div class="empty-state" style="padding:40px;text-align:center">Filtra por Paciente, Medico o Producto para cargar la evolucion historica.</div>`;
+    $("network-kpis").innerHTML = "";
+    $("network-alerts").innerHTML = "";
+    $("network-focus").innerHTML = "";
+    $("network-links-body").innerHTML = "";
+    return;
+  }
+
+  $("network-meta").textContent = "Cargando serie temporal completa...";
+  const snapshots = await ensureAllNetworkSnapshots();
+  if (token !== state.networkRenderToken) return;
   renderTimelineNetworkGraph(snapshots);
-  
-  // Vaciamos las alertas y tarjetas debajo ya que eran de 1 mes singular y node focus.
+
   $("network-alerts").innerHTML = "";
   $("network-focus").innerHTML = "";
   $("network-links-body").innerHTML = "";
@@ -1336,7 +1373,6 @@ async function openDoctorsView() {
 async function openNetworkView() {
   setActiveView("network");
   await loadNetworkIndex();
-  renderNetworkMonthOptions();
   await renderNetworkView();
 }
 
@@ -1366,22 +1402,26 @@ function bindEvents() {
 
   // No network-play-btn nor network-month anymore
 
+  const debouncedNetworkRender = debounce(() => {
+    renderNetworkView();
+  }, 320);
+
   $("network-doctor-filter").addEventListener("input", () => {
     state.networkDoctorFilter = $("network-doctor-filter").value.trim();
     state.selectedNetworkNode = null;
-    renderNetworkView();
+    debouncedNetworkRender();
   });
 
   $("network-patient-filter").addEventListener("input", () => {
     state.networkPatientFilter = $("network-patient-filter").value.trim();
     state.selectedNetworkNode = null;
-    renderNetworkView();
+    debouncedNetworkRender();
   });
 
   $("network-product-filter").addEventListener("input", () => {
     state.networkProductFilter = $("network-product-filter").value.trim();
     state.selectedNetworkNode = null;
-    renderNetworkView();
+    debouncedNetworkRender();
   });
 
   $("network-clear-filters").addEventListener("click", () => {
