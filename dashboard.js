@@ -1126,7 +1126,6 @@ async function renderTimelineNetworkGraph(snapshots) {
   // Counterparts for Product: Patients (sources), Doctors (sources)
   
   const historyEdges = [];
-  const crossEdges = []; // Extra edges not touching the focal node directly
   const counterparts = new Map(); // id -> { type, label, totalRecetas }
   
   snapshots.forEach((snap, mIndex) => {
@@ -1138,15 +1137,12 @@ async function renderTimelineNetworkGraph(snapshots) {
     if (focalType === "paciente") {
       edgesFound.push(...mp.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "medico", targetId: focalNode.id, targetType: "paciente" })));
       edgesFound.push(...pp.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "paciente", targetId: String(e.target), targetType: "producto" })));
-      crossEdges.push(...md.map(e => ({ mIndex, sourceId: String(e.source), targetId: String(e.target), recetas: Number(e.recetas||0) })));
     } else if (focalType === "medico") {
       edgesFound.push(...mp.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "medico", targetId: String(e.target), targetType: "paciente" })));
       edgesFound.push(...md.filter(e => String(e.source) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: focalNode.id, sourceType: "medico", targetId: String(e.target), targetType: "producto" })));
-      crossEdges.push(...pp.map(e => ({ mIndex, sourceId: String(e.source), targetId: String(e.target), recetas: Number(e.recetas||0) })));
     } else if (focalType === "producto") {
       edgesFound.push(...pp.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "paciente", targetId: focalNode.id, targetType: "producto" })));
       edgesFound.push(...md.filter(e => String(e.target) === focalNode.id).map(e => ({ mes: snap.mes, mIndex, recetas: Number(e.recetas||0), sourceId: String(e.source), sourceType: "medico", targetId: focalNode.id, targetType: "producto" })));
-      crossEdges.push(...mp.map(e => ({ mIndex, sourceId: String(e.source), targetId: String(e.target), recetas: Number(e.recetas||0) })));
     }
 
     edgesFound.forEach(e => {
@@ -1182,7 +1178,7 @@ async function renderTimelineNetworkGraph(snapshots) {
   // Limit counterparts (Top 8 for cleanly displaying lanes)
   const topCounterparts = Array.from(counterparts.values())
     .sort((a,b) => b.totalRecetas - a.totalRecetas)
-    .slice(0, 14); // up to 14 lanes total
+    .slice(0, 10); // lectura limpia: solo top conexiones
 
   const laneAssignments = new Map(); // id -> {y, type}
   
@@ -1219,14 +1215,24 @@ async function renderTimelineNetworkGraph(snapshots) {
     (e.targetId === focalNode.id && validCounterpartIds.has(e.sourceId))
   );
 
-  const renderedCrossEdges = crossEdges.filter(e => validCounterpartIds.has(e.sourceId) && validCounterpartIds.has(e.targetId));
+  const renderedEdgesByMonth = new Map();
+  renderedEdges.forEach((edge) => {
+    if (!renderedEdgesByMonth.has(edge.mIndex)) renderedEdgesByMonth.set(edge.mIndex, []);
+    renderedEdgesByMonth.get(edge.mIndex).push(edge);
+  });
+  renderedEdgesByMonth.forEach((edges, key) => {
+    renderedEdgesByMonth.set(
+      key,
+      edges.sort((a, b) => Number(b.recetas || 0) - Number(a.recetas || 0)).slice(0, 8)
+    );
+  });
 
-  const maxRecetas = Math.max(...renderedEdges.map(e => e.recetas), 1);
-  const maxCross = Math.max(...renderedCrossEdges.map(e => e.recetas), 1);
+  const visibleEdges = Array.from(renderedEdgesByMonth.values()).flat();
+  const maxRecetas = Math.max(...visibleEdges.map((e) => Number(e.recetas || 0)), 1);
 
   // Render SVG X-axis columns
   const svgCols = snapshots.map((snap, i) => {
-    const x = 200 + i * 90;
+    const x = 240 + i * 90;
     return `
       <text x="${x}" y="30" text-anchor="middle" font-size="12" font-weight="700" fill="#102235">${esc(snap.mes)}</text>
       <line x1="${x}" x2="${x}" y1="40" y2="${H - 20}" stroke="rgba(16,34,53,0.06)" stroke-dasharray="4 4" />
@@ -1240,8 +1246,8 @@ async function renderTimelineNetworkGraph(snapshots) {
     const bg = lane.isFocal ? "rgba(0,0,0,0.04)" : "transparent";
     return `
       <rect x="0" y="${lane.y - 15}" width="${W}" height="30" fill="${bg}" />
-      <text x="180" y="${lane.y + 4}" text-anchor="end" font-size="12" font-weight="${weight}" fill="${color}">${esc(shortNodeLabel(lane.label, 26))}</text>
-      <line x1="190" x2="${W - 20}" y1="${lane.y}" y2="${lane.y}" stroke="${color}" stroke-opacity="0.2" stroke-width="2" stroke-linecap="round" />
+      <text x="220" y="${lane.y + 4}" text-anchor="end" font-size="12" font-weight="${weight}" fill="${color}">${esc(shortNodeLabel(lane.label, 30))}</text>
+      <line x1="230" x2="${W - 20}" y1="${lane.y}" y2="${lane.y}" stroke="${color}" stroke-opacity="0.16" stroke-width="2" stroke-linecap="round" />
     `;
   }).join("");
 
@@ -1250,40 +1256,24 @@ async function renderTimelineNetworkGraph(snapshots) {
   let svgNodes = "";
 
   snapshots.forEach((snap, mIndex) => {
-    const x = 200 + mIndex * 90;
-    const monthEdges = renderedEdges.filter(e => e.mIndex === mIndex);
+    const x = 240 + mIndex * 90;
+    const monthEdges = renderedEdgesByMonth.get(mIndex) || [];
     
     // focal node activity?
     if (monthEdges.length > 0) {
       svgNodes += `<circle cx="${x}" cy="${focalY}" r="6" fill="${nodeColor(focalType)}" stroke="#fff" stroke-width="2" />`;
     }
 
-    // Dibujar enlaces cruzados saltando el nodo focal con curvas suaves atenuadas
-    const thisMonthCross = renderedCrossEdges.filter(e => e.mIndex === mIndex);
-    thisMonthCross.forEach(e => {
-      const laneA = laneAssignments.get(e.sourceId);
-      const laneB = laneAssignments.get(e.targetId);
-      if (!laneA || !laneB) return;
-      
-      const y1 = laneA.y;
-      const y2 = laneB.y;
-      const cy1 = y1 + (y2 - y1) * 0.25;
-      const cy2 = y1 + (y2 - y1) * 0.75;
-      const width = 1 + (e.recetas / maxCross) * 8; // Mapeado de grosor acotado
-      
-      svgEdges += `<path d="M ${x} ${y1} C ${x + 35} ${cy1}, ${x + 35} ${cy2}, ${x} ${y2}" stroke="#8b5cf6" stroke-width="${width.toFixed(1)}" fill="none" opacity="0.25" stroke-linecap="round"></path>`;
-    });
-
     monthEdges.forEach(e => {
       const counterpartId = e.sourceId === focalNode.id ? e.targetId : e.sourceId;
       const counterpartLane = laneAssignments.get(counterpartId);
       if (!counterpartLane) return;
       
-      const width = 1 + (e.recetas / maxRecetas) * 12;
+      const width = 1 + (e.recetas / maxRecetas) * 10;
       svgNodes += `<circle cx="${x}" cy="${counterpartLane.y}" r="5" fill="${nodeColor(counterpartLane.type)}" />`;
       
       // Arc / Edge Vertical principal
-      svgEdges += `<path d="M ${x} ${focalY} L ${x} ${counterpartLane.y}" stroke="${nodeColor(counterpartLane.type)}" stroke-width="${width.toFixed(1)}" stroke-linecap="round" fill="none" opacity="0.65"></path>`;
+      svgEdges += `<path d="M ${x} ${focalY} L ${x} ${counterpartLane.y}" stroke="${nodeColor(counterpartLane.type)}" stroke-width="${width.toFixed(1)}" stroke-linecap="round" fill="none" opacity="0.78"></path>`;
     });
   });
 
@@ -1301,8 +1291,11 @@ async function renderTimelineNetworkGraph(snapshots) {
 
   // Draw KPIs globally for the filtered timeframe
   const globalRecetas = historyEdges.reduce((acc, e) => acc + e.recetas, 0);
+  const visibleRecetas = visibleEdges.reduce((acc, e) => acc + Number(e.recetas || 0), 0);
   $("network-kpis").innerHTML = `
-    <span class="network-pill">Total histórico cruzando filtro: <strong>${fmtInt(globalRecetas)}</strong> recetas</span>
+    <span class="network-pill"><strong>${fmtInt(globalRecetas)}</strong> recetas históricas del filtro</span>
+    <span class="network-pill">Mostrando conexiones principales: <strong>${fmtInt(visibleRecetas)}</strong> recetas</span>
+    <span class="network-pill">Modo lectura clínica: <strong>Top 8 por mes</strong></span>
   `;
 }
 
