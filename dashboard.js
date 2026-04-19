@@ -1,6 +1,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const echartsInstances = {};
 const fmtInt = (value) => Number(value || 0).toLocaleString("es-PY", { maximumFractionDigits: 0 });
 const fmtDec = (value) => Number(value || 0).toLocaleString("es-PY", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
@@ -245,51 +246,33 @@ function renderFocusCard(targetId, entity, metrics, subtitle) {
 
 function renderMiniTrend(targetId, legendId, rows, seriesAKey, seriesALabel, seriesBKey, seriesBLabel) {
   if (!rows.length) {
-    $(targetId).innerHTML = `<div class="empty-state">Sin datos historicos para graficar.</div>`;
+    $(targetId).innerHTML = `<div class="empty-state">Sin datos históricos para graficar.</div>`;
     $(legendId).innerHTML = "";
     return;
   }
-
+  
+  if (!echartsInstances[targetId]) {
+    echartsInstances[targetId] = echarts.init($(targetId));
+  }
+  const chart = echartsInstances[targetId];
+  
   const labels = rows.map((row) => row.mes);
   const seriesA = rows.map((row) => Number(row[seriesAKey] || 0));
   const seriesB = rows.map((row) => Number(row[seriesBKey] || 0));
-  const all = [...seriesA, ...seriesB];
-  const maxY = Math.max(...all, 1);
-  const W = 860;
-  const H = 240;
-  const pL = 48;
-  const pR = 18;
-  const pT = 16;
-  const pB = 34;
-  const cW = W - pL - pR;
-  const cH = H - pT - pB;
-  const xAt = (idx) => pL + (labels.length === 1 ? cW / 2 : (idx / (labels.length - 1)) * cW);
-  const yAt = (value) => pT + cH - (value / maxY) * cH;
-
-  const points = (arr) => arr.map((value, idx) => `${xAt(idx).toFixed(1)},${yAt(value).toFixed(1)}`).join(" ");
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-
-  for (let i = 0; i <= 4; i++) {
-    const y = pT + (i / 4) * cH;
-    svg += `<line x1="${pL}" x2="${W - pR}" y1="${y}" y2="${y}" stroke="#e2e8f0" stroke-width="1"/>`;
-    svg += `<text x="${pL - 6}" y="${y + 4}" text-anchor="end" font-size="10" fill="#7a8da3">${fmtInt(Math.round(maxY * (1 - i / 4)))}</text>`;
-  }
-
-  const tickStep = Math.max(1, Math.floor(labels.length / 8));
-  labels.forEach((label, idx) => {
-    if (idx % tickStep === 0 || idx === labels.length - 1) {
-      svg += `<text x="${xAt(idx)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#7a8da3">${esc(label)}</text>`;
-    }
-  });
-
-  svg += `<polyline points="${points(seriesA)}" fill="none" stroke="#1f5d96" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
-  svg += `<polyline points="${points(seriesB)}" fill="none" stroke="#d97706" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
-  svg += `</svg>`;
-  $(targetId).innerHTML = svg;
-  $(legendId).innerHTML = `
-    <span><span class="legend-dot" style="background:#1f5d96"></span>${esc(seriesALabel)}</span>
-    <span><span class="legend-dot" style="background:#d97706"></span>${esc(seriesBLabel)}</span>
-  `;
+  
+  const option = {
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15, 23, 42, 0.9)', borderColor: 'rgba(255,255,255,0.1)', textStyle: { color: '#f8fafc' } },
+    legend: { data: [seriesALabel, seriesBLabel], textStyle: { color: '#94a3b8' }, bottom: 0 },
+    grid: { left: '3%', right: '4%', bottom: '15%', top: '10%', containLabel: true },
+    xAxis: { type: 'category', boundaryGap: false, data: labels, axisLabel: { color: '#94a3b8' }, axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+    series: [
+      { name: seriesALabel, type: 'line', smooth: true, itemStyle: { color: '#3b82f6' }, lineStyle: { width: 3 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: 'rgba(59,130,246,0.3)'}, {offset: 1, color: 'rgba(59,130,246,0)'}]) }, data: seriesA },
+      { name: seriesBLabel, type: 'line', smooth: true, itemStyle: { color: '#f59e0b' }, lineStyle: { width: 3 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: 'rgba(245,158,11,0.3)'}, {offset: 1, color: 'rgba(245,158,11,0)'}]) }, data: seriesB }
+    ]
+  };
+  chart.setOption(option);
+  $(legendId).innerHTML = ""; 
 }
 
 function renderTableBody(targetId, rows, mode) {
@@ -704,208 +687,137 @@ function renderNetworkGraph(snapshot, filtered, previousSnapshot, monthContext) 
 
   ensureNetworkSelection([...doctors, ...patients, ...products]);
   const selected = state.selectedNetworkNode;
-  const selectedKey = selected ? `${selected.type}:${selected.id}` : "";
   const doctorFocusMode = selected?.type === "medico";
-  const W = 1180;
-  const H = 620;
-  const topY = 146;
-  const laneHeight = 340;
-  const nodeWidth = 206;
-  const nodeRadius = 16;
-  const xCols = doctorFocusMode
-    ? { medico: 160, paciente: 488, producto: 814 }
-    : { medico: 70, paciente: 488, producto: 904 };
 
   const selectedSupportEdges = selected?.type === "medico"
-    ? edgeMD
-        .filter((edge) => String(edge.source) === String(selected.id))
-        .map((edge) => ({ ...edge, sourceType: "medico", targetType: "producto", derived: true }))
+    ? edgeMD.filter((e) => String(e.source) === String(selected.id)).map((e) => ({ ...e, sourceType: "medico", targetType: "producto", derived: true }))
     : selected?.type === "producto"
-      ? edgeMD
-          .filter((edge) => String(edge.target) === String(selected.id))
-          .map((edge) => ({ ...edge, sourceType: "medico", targetType: "producto", derived: true }))
+      ? edgeMD.filter((e) => String(e.target) === String(selected.id)).map((e) => ({ ...e, sourceType: "medico", targetType: "producto", derived: true }))
       : [];
 
-  const selectedProductIds = new Set(selectedSupportEdges.map((edge) => String(edge.target)));
-  const visibleDoctors = doctorFocusMode
-    ? doctors.filter((node) => String(node.id) === String(selected.id))
-    : doctors;
-  const visiblePatients = doctorFocusMode ? [] : patients;
-  const visibleProducts = doctorFocusMode
-    ? products.filter((node) => selectedProductIds.has(String(node.id)))
-    : products;
-
-  const doctorWeight = new Map();
-  const productWeight = new Map();
-  (doctorFocusMode ? selectedSupportEdges : edgeMP).forEach((edge) => {
-    doctorWeight.set(String(edge.source), (doctorWeight.get(String(edge.source)) || 0) + Number(edge.recetas || 0));
-  });
-  (doctorFocusMode ? selectedSupportEdges : edgePP).forEach((edge) => {
-    const key = doctorFocusMode ? edge.target : edge.target;
-    productWeight.set(String(key), (productWeight.get(String(key)) || 0) + Number(edge.recetas || 0));
-  });
-
-  const sortByWeight = (items, weights) => items.slice().sort((a, b) => {
-    const diff = Number(weights.get(String(b.id)) || b.recetas || 0) - Number(weights.get(String(a.id)) || a.recetas || 0);
-    return diff || String(a.label || a.id).localeCompare(String(b.label || b.id), "es");
-  });
-
-  function stackPositions(nodes, type, weights) {
-    const ranked = sortByWeight(nodes, weights);
-    const totalWeight = Math.max(ranked.reduce((acc, node) => acc + Number(weights.get(String(node.id)) || node.recetas || 1), 0), 1);
-    const gap = 12;
-    const available = laneHeight - Math.max(0, ranked.length - 1) * gap;
-    let cursor = topY;
-    return ranked.map((node, idx) => {
-      const weight = Number(weights.get(String(node.id)) || node.recetas || 1);
-      const height = ranked.length === 1 ? Math.max(84, available) : Math.max(34, (weight / totalWeight) * available);
-      const y = idx === ranked.length - 1 ? topY + laneHeight - height : cursor;
-      cursor = y + height + gap;
-      return { ...node, x: xCols[type], y, w: nodeWidth, h: height, cy: y + height / 2 };
-    });
-  }
-
-  const doctorPos = stackPositions(visibleDoctors, "medico", doctorWeight);
-  const productPos = stackPositions(visibleProducts, "producto", productWeight);
-  const focalPos = !doctorFocusMode && focalPatient ? [{
-    ...focalPatient,
-    x: xCols.paciente,
-    y: topY + laneHeight / 2 - 64,
-    w: nodeWidth,
-    h: 128,
-    cy: topY + laneHeight / 2,
-  }] : [];
-  const nodeMap = new Map([...doctorPos, ...focalPos, ...productPos].map((item) => [`${item.type}:${item.id}`, item]));
-
   const allEdges = [
-    ...edgeMP.map((edge) => ({ ...edge, sourceType: "medico", targetType: "paciente" })),
-    ...edgePP.map((edge) => ({ ...edge, sourceType: "paciente", targetType: "producto" })),
+    ...edgeMP.map((e) => ({ ...e, sourceType: "medico", targetType: "paciente" })),
+    ...edgePP.map((e) => ({ ...e, sourceType: "paciente", targetType: "producto" })),
   ];
   const renderedEdges = doctorFocusMode ? selectedSupportEdges : [...allEdges, ...selectedSupportEdges];
-  const maxRecipes = Math.max(...renderedEdges.map((edge) => Number(edge.recetas || 0)), 1);
-  const nodeStats = new Map();
 
-  const pastEdges = new Set();
-  if (previousSnapshot) {
-    const prev_mp = rowsToObjects(previousSnapshot.edges.medico_paciente || []);
-    const prev_pp = rowsToObjects(previousSnapshot.edges.paciente_producto || []);
-    const prev_md = rowsToObjects(previousSnapshot.edges.medico_producto || []);
-    prev_mp.forEach(e => pastEdges.add(`medico:${e.source}->paciente:${e.target}`));
-    prev_pp.forEach(e => pastEdges.add(`paciente:${e.source}->producto:${e.target}`));
-    prev_md.forEach(e => pastEdges.add(`medico:${e.source}->producto:${e.target}`));
+  const eNodes = [];
+  const eLinks = [];
+  const addedNodes = new Set();
+
+  const addNode = (nodeList, type, baseColor, depth) => {
+    nodeList.forEach(n => {
+      const uniqueName = `${type}:${n.id}`;
+      if (addedNodes.has(uniqueName)) return;
+      addedNodes.add(uniqueName);
+      
+      const isActive = selected && selected.type === type && String(selected.id) === String(n.id);
+      
+      eNodes.push({
+        name: uniqueName,
+        depth: depth,
+        itemStyle: {
+          color: baseColor,
+          borderColor: isActive ? '#fff' : 'rgba(255,255,255,0.1)',
+          borderWidth: isActive ? 2 : 1
+        },
+        _raw: { type, id: n.id, label: n.label, recetas: n.recetas }
+      });
+    });
+  };
+
+  addNode(doctors, "medico", '#3b82f6', 0);
+  if (focalPatient) addNode([focalPatient], "paciente", '#10b981', 1);
+  addNode(patients, "paciente", '#10b981', 1);
+  addNode(products, "producto", '#f59e0b', 2);
+
+  renderedEdges.forEach(e => {
+    const sName = `${e.sourceType}:${e.source}`;
+    const tName = `${e.targetType}:${e.target}`;
+    if (!addedNodes.has(sName) || !addedNodes.has(tName)) return;
+    
+    eLinks.push({
+      source: sName,
+      target: tName,
+      value: Math.max(1, Number(e.recetas || 0)), // Sankey requires value > 0
+      lineStyle: {
+        color: e.derived ? '#8b5cf6' : 'source',
+        opacity: e.derived ? 0.6 : 0.4,
+        type: e.derived ? 'dashed' : 'solid'
+      }
+    });
+  });
+
+  if (!echartsInstances["network-graph"]) {
+    echartsInstances["network-graph"] = echarts.init($("network-graph"));
+    
+    echartsInstances["network-graph"].on('click', function(params) {
+      if (params.dataType === 'node') {
+        const raw = params.data._raw;
+        if (raw) {
+          state.selectedNetworkNode = { type: raw.type, id: raw.id };
+          renderNetworkView();
+        }
+      }
+    });
   }
-
-  renderedEdges.forEach((edge) => {
-    const sourceKey = `${edge.sourceType}:${edge.source}`;
-    const targetKey = `${edge.targetType}:${edge.target}`;
-    if (!nodeStats.has(sourceKey)) nodeStats.set(sourceKey, { links: 0, recetas: 0, counterparts: new Set() });
-    if (!nodeStats.has(targetKey)) nodeStats.set(targetKey, { links: 0, recetas: 0, counterparts: new Set() });
-    const recetas = Number(edge.recetas || 0);
-    nodeStats.get(sourceKey).links += 1;
-    nodeStats.get(sourceKey).recetas += recetas;
-    nodeStats.get(sourceKey).counterparts.add(targetKey);
-    nodeStats.get(targetKey).links += 1;
-    nodeStats.get(targetKey).recetas += recetas;
-    nodeStats.get(targetKey).counterparts.add(sourceKey);
-  });
-
-  const svgEdges = renderedEdges.map((edge) => {
-    const from = nodeMap.get(`${edge.sourceType}:${edge.source}`);
-    const to = nodeMap.get(`${edge.targetType}:${edge.target}`);
-    if (!from || !to) return "";
-    const active = edge.derived || !selectedKey || selectedKey === `${edge.sourceType}:${edge.source}` || selectedKey === `${edge.targetType}:${edge.target}`;
-    
-    const edgeKey = `${edge.sourceType}:${edge.source}->${edge.targetType}:${edge.target}`;
-    const isNew = previousSnapshot ? !pastEdges.has(edgeKey) : false;
-
-    const width = 1 + (Number(edge.recetas || 0) / maxRecipes) * (edge.derived ? 12 : 18);
-    const x1 = from.x + from.w;
-    const y1 = from.cy;
-    const x2 = to.x;
-    const y2 = to.cy;
-    const cx1 = x1 + (x2 - x1) * 0.28;
-    const cx2 = x1 + (x2 - x1) * 0.72;
-    
-    let stroke = "#d7e3ef";
-    if (edge.derived) {
-      stroke = "#7c3aed";
-    } else if (isNew) {
-      stroke = active ? "#10b981" : "rgba(16, 185, 129, 0.35)";
-    } else {
-      stroke = active ? "#8fb4da" : "#d7e3ef";
-    }
-
-    const dash = edge.derived ? ` stroke-dasharray="7 6"` : "";
-    const opacity = edge.derived ? 0.82 : active ? (isNew ? 0.95 : 0.82) : 0.18;
-    return `<path d="M ${x1} ${y1} C ${cx1} ${y1}, ${cx2} ${y2}, ${x2} ${y2}" stroke="${stroke}" stroke-width="${width.toFixed(2)}" stroke-linecap="round" fill="none" opacity="${opacity}"${dash}></path>`;
-  }).join("");
-
-  const chronology = buildNetworkChronologySvg(monthContext, 150, W - 150, 110);
-  const headings = `
-    <text x="${W / 2}" y="40" text-anchor="middle" font-size="18" font-weight="700" fill="#102235">Flujo clinico del mes ${esc(snapshot.mes)}</text>
-    <text x="${W / 2}" y="62" text-anchor="middle" font-size="12" fill="#5f738a">${doctorFocusMode ? "Modo foco: medico seleccionado y productos que receto" : "Medicos que prescriben, paciente foco y productos principales del periodo"}</text>
-    ${chronology}
-    <text x="${xCols.medico + nodeWidth / 2}" y="134" text-anchor="middle" font-size="12" font-weight="700" fill="#1f5d96">${doctorFocusMode ? "Medico seleccionado" : "Medicos"}</text>
-    ${doctorFocusMode ? "" : `<text x="${xCols.paciente + nodeWidth / 2}" y="134" text-anchor="middle" font-size="12" font-weight="700" fill="#0f766e">Paciente foco</text>`}
-    <text x="${xCols.producto + nodeWidth / 2}" y="134" text-anchor="middle" font-size="12" font-weight="700" fill="#d97706">${doctorFocusMode ? "Productos recetados" : "Productos"}</text>
-  `;
-  const guides = `
-    <rect x="${xCols.medico}" y="${topY}" width="${nodeWidth}" height="${laneHeight}" rx="20" fill="rgba(31,93,150,0.03)" stroke="rgba(31,93,150,0.08)"></rect>
-    ${doctorFocusMode ? "" : `<rect x="${xCols.paciente}" y="${topY}" width="${nodeWidth}" height="${laneHeight}" rx="20" fill="rgba(15,118,110,0.03)" stroke="rgba(15,118,110,0.08)"></rect>`}
-    <rect x="${xCols.producto}" y="${topY}" width="${nodeWidth}" height="${laneHeight}" rx="20" fill="rgba(217,119,6,0.03)" stroke="rgba(217,119,6,0.08)"></rect>
-  `;
-
-  const svgNodes = [...doctorPos, ...focalPos, ...productPos].map((node) => {
-    const pool = node.type === "medico" ? visibleDoctors : node.type === "paciente" ? visiblePatients : visibleProducts;
-    const maxByType = Math.max(...pool.map((item) => Number(item.recetas || 0)), 1);
-    const ratio = Number(node.recetas || 0) / maxByType;
-    const color = nodeColor(node.type);
-    const active = selectedKey === `${node.type}:${node.id}`;
-    const isFocal = focalPatient && node.type === "paciente" && String(node.id) === String(focalPatient.id);
-    const fill = active || isFocal ? color : nodeTint(node.type, ratio);
-    const textFill = active || isFocal ? "#ffffff" : "#102235";
-    const subFill = active || isFocal ? "#dbeafe" : "rgba(16,34,53,0.72)";
-    const border = active || isFocal ? color : "rgba(16,34,53,0.12)";
-    const stats = nodeStats.get(`${node.type}:${node.id}`) || { links: 0, recetas: 0, counterparts: new Set() };
-    return `
-      <g class="network-node" data-node-type="${node.type}" data-node-id="${esc(node.id)}" style="cursor:pointer"
-         data-node-label="${esc(node.label || node.id)}"
-         data-node-recetas="${esc(node.recetas)}"
-         data-node-links="${esc(stats.links)}"
-         data-node-counterparts="${esc(stats.counterparts.size)}">
-        <rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="${nodeRadius}" fill="${fill}" stroke="${border}" stroke-width="${active ? 2.5 : 1.1}"></rect>
-        <text x="${node.x + 14}" y="${node.y + 24}" font-size="11" font-weight="700" fill="${textFill}">${esc(shortNodeLabel(node.label || node.id, node.type === "producto" ? 30 : 26))}</text>
-        <text x="${node.x + 14}" y="${node.y + 42}" font-size="10" fill="${subFill}">${fmtInt(node.recetas)} recetas</text>
-      </g>
-    `;
-  }).join("");
-
-  $("network-graph").innerHTML = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="min-width:${W}px;display:block">${headings}${guides}${svgEdges}${svgNodes}</svg>`;
-
-  $("network-graph").querySelectorAll(".network-node").forEach((nodeEl) => {
-    nodeEl.addEventListener("click", () => {
-      state.selectedNetworkNode = {
-        type: nodeEl.dataset.nodeType,
-        id: nodeEl.dataset.nodeId,
-      };
-      renderNetworkView();
-    });
-    nodeEl.addEventListener("mouseenter", (event) => {
-      showNetworkTooltip(event, buildNetworkTooltip({
-        type: nodeEl.dataset.nodeType,
-        id: nodeEl.dataset.nodeId,
-        label: nodeEl.dataset.nodeLabel,
-        recetas: nodeEl.dataset.nodeRecetas,
-      }, {
-        links: Number(nodeEl.dataset.nodeLinks || 0),
-        recetas: Number(nodeEl.dataset.nodeRecetas || 0),
-        counterparts: Number(nodeEl.dataset.nodeCounterparts || 0),
-      }));
-    });
-    nodeEl.addEventListener("mousemove", moveNetworkTooltip);
-    nodeEl.addEventListener("mouseleave", hideNetworkTooltip);
-  });
+  const chart = echartsInstances["network-graph"];
+  
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(15, 23, 42, 0.94)',
+      borderColor: 'rgba(255,255,255,0.15)',
+      textStyle: { color: '#f8fafc' },
+      formatter: function (params) {
+        if (params.dataType === 'node') {
+          const raw = params.data._raw;
+          return `<strong style="font-size:14px;display:block;margin-bottom:4px">${esc(raw.label || raw.id)}</strong>
+                  <span style="color:#94a3b8;font-size:12px;text-transform:uppercase">${raw.type}</span><br/>
+                  Total Recetas: <strong>${fmtInt(raw.recetas)}</strong>`;
+        } else {
+          return `<strong>Flujo de recetas</strong><br/>
+                  Volumen: <strong>${fmtInt(params.data.value)}</strong> recetas`;
+        }
+      }
+    },
+    series: [
+      {
+        type: 'sankey',
+        layout: 'none',
+        top: 30,
+        bottom: 30,
+        left: '2%',
+        right: '4%',
+        nodeGap: 16,
+        nodeWidth: 32,
+        data: eNodes,
+        links: eLinks,
+        emphasis: {
+          focus: 'adjacency'
+        },
+        label: {
+          color: '#fff',
+          fontFamily: 'Inter',
+          fontSize: 12,
+          formatter: function(params) {
+            const raw = params.data._raw;
+            return shortNodeLabel(raw.label || raw.id, 24);
+          }
+        },
+        lineStyle: {
+          color: 'source',
+          curveness: 0.5,
+          opacity: 0.3
+        }
+      }
+    ]
+  };
+  
+  chart.setOption(option, true);
 }
+
 
 function renderNetworkFocus(snapshot, filtered) {
   if (!state.selectedNetworkNode) {
